@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from window_manager import WindowManager
-from ..task_manager import TaskManager
+from backend.task_manager import TaskManager
 
 router = APIRouter()
 

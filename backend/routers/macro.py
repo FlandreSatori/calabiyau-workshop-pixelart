@@ -2,7 +2,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Any
-from ..dependencies import get_dd, get_vision
+from backend.dependencies import get_dd, get_vision
 from ui_interaction import UIInteraction
 from movement_controller import MovementController
 from window_manager import WindowManager

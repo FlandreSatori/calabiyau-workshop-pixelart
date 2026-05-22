@@ -3,7 +3,7 @@ import os
 import asyncio
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException
 from image_to_blueprint import image_to_blueprint
-from ..log_manager import manager
+from backend.log_manager import manager
 
 router = APIRouter()
 

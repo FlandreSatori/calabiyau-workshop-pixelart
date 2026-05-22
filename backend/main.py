@@ -1,15 +1,16 @@
 import asyncio
+import argparse
 import sys
 import ctypes
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from .log_manager import manager, install_stdout_bridge, set_broadcast_loop
+from backend.log_manager import manager, install_stdout_bridge, set_broadcast_loop
 
 install_stdout_bridge()
 
-from .routers import control, vision, macro, system, blueprint
+from backend.routers import control, vision, macro, system, blueprint
 
 if sys.platform == "win32":
     try:
@@ -52,3 +53,30 @@ async def websocket_logs(websocket: WebSocket):
         manager.disconnect(websocket)
     except Exception:
         manager.disconnect(websocket)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="PYDD Backend Server")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host")
+    parser.add_argument("--port", type=int, default=8000, help="Bind port")
+    parser.add_argument("--reload", action="store_true", help="Enable auto reload in development")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+
+    import uvicorn
+
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        use_colors=False,
+        log_level="info",
+    )
+
+
+if __name__ == "__main__":
+    main()

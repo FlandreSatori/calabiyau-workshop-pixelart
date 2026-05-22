@@ -3,8 +3,8 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Any
-from ..dependencies import get_dd, get_vision
-from .control import BaseGameRequest, ensure_game_active
+from backend.dependencies import get_dd, get_vision
+from backend.routers.control import BaseGameRequest, ensure_game_active
 from win32 import win32gui
 
 router = APIRouter()

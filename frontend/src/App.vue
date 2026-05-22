@@ -280,9 +280,9 @@
         <!-- 关于面板 -->
         <div v-show="activeTab === 'about'" class="panel-content">
           <el-card shadow="never" class="settings-card">
-            <h2>PyDD Controller <small>v1.0.0</small></h2>
-            <p>基于 OpenCV 与驱动级模拟的自动化搭建辅助工具。</p>
-            <p><strong>完全重构的微服务架构 :</strong><br/> FastAPI + WebSocket 实控端，配合 Vue3 渲染控制前台。</p>
+            <h2>Beta <small>v0.1.0</small></h2>
+            <p>个人主页：<a href="https://space.bilibili.com/2199618" target="_blank" rel="noopener">https://space.bilibili.com/2199618</a></p>
+            <p>项目主页：<a href="https://github.com/FlandreSatori/calabiyau-workshop-pixelart" target="_blank" rel="noopener">https://github.com/FlandreSatori/calabiyau-workshop-pixelart</a></p>
           </el-card>
         </div>
       </el-main>
@@ -297,7 +297,7 @@ import { ElMessage, UploadFile } from 'element-plus';
 
 type WindowInfo = { hwnd: number; pid: number; exe_name: string; title: string; is_foreground: boolean; };
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = 'http://127.0.0.1:8000/api';
 const isCollapse = ref(false);
 const activeTab = ref('image');
 const lastDyeAction = ref<(() => Promise<boolean>) | null>(null);
@@ -548,7 +548,7 @@ const calibrateHorizontal = async (manual = false) => {
 };
 
 const connectWebSocket = () => {
-  ws = new WebSocket('ws://localhost:8000/api/ws/logs');
+  ws = new WebSocket('ws://127.0.0.1:8000/api/ws/logs');
   ws.onmessage = (event) => addBackendLog(event.data);
   ws.onclose = () => {
     addLog(`WebSocket 已断开，5秒后重连...`);
