@@ -25,6 +25,7 @@ class BaseGameRequest(BaseModel):
     ui_click_delay: float = Field(0.3, ge=0.0, le=5.0)
     ui_clipboard_delay: float = Field(0.2, ge=0.0, le=5.0)
     move_sample_rate: float = Field(100.0, ge=1.0, le=1000.0)
+    humanize_level: int = Field(0, ge=0, le=3)
 
 class DyeRequest(BaseGameRequest):
     hex_color: str
@@ -76,7 +77,7 @@ def ensure_game_active(exe_name: str, window_hwnd: int | None = None, settle_del
 def dye_block(req: DyeRequest, dd: Any = Depends(get_dd)):
     ensure_game_active(req.exe_name, req.window_hwnd, req.focus_settle_delay)
     
-    ui = UIInteraction(dd, req.exe_name)
+    ui = UIInteraction(dd, req.exe_name, humanize_level=req.humanize_level)
     
     if not req.repaste_only:
         # Switch back to iron plate (slot 1) before dyeing
@@ -106,7 +107,7 @@ def dye_block(req: DyeRequest, dd: Any = Depends(get_dd)):
 @router.post("/dye-confirm")
 def dye_confirm(req: DyeConfirmRequest, dd: Any = Depends(get_dd)):
     ensure_game_active(req.exe_name, req.window_hwnd, req.focus_settle_delay)
-    ui = UIInteraction(dd, req.exe_name)
+    ui = UIInteraction(dd, req.exe_name, humanize_level=req.humanize_level)
     ui.click_confirm(req.confirm_button_x, req.confirm_button_y, click_delay=req.ui_click_delay)
     time.sleep(req.dye_confirm_delay)
     time.sleep(req.focus_settle_delay)

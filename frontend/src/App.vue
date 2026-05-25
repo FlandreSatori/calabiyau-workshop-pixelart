@@ -208,6 +208,10 @@
                   <el-input-number size="small" v-model="moveSampleRate" :min="30" :max="100" />
                 </div>
                 <div class="setting-item mt-2">
+                  <div class="label">拟人化等级 (0-3)</div>
+                  <el-input-number size="small" v-model="humanizeLevel" :min="0" :max="3" />
+                </div>
+                <div class="setting-item mt-2">
                   <div class="label">视角阈值 (%)</div>
                   <el-input-number size="small" v-model="viewAdjustThresholdPercent" :min="1" :max="50" />
                 </div>
@@ -315,6 +319,7 @@ const debugMode = ref(false);
 const baselineGreenDistance = ref<number | null>(null);
 const viewAdjustThresholdPercent = ref<number>(10); // percent of baseline distance to trigger (默认 10%)
 const viewAdjustNudgeTimeout = ref<number>(0.15); // seconds to hold move for nudge
+const humanizeLevel = ref<number>(1); // default level 1
 
 // Configuration Defaults
 const configPaletteX = ref(2157);
@@ -702,6 +707,7 @@ const getTargetPayload = () => ({
   ui_click_delay: uiClickDelay.value,
   ui_clipboard_delay: uiClipboardDelay.value,
   move_sample_rate: moveSampleRate.value,
+  humanize_level: humanizeLevel.value,
 });
 
 const startAutoBuild = async () => {
