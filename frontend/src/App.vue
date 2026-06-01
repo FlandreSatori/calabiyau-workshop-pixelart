@@ -75,6 +75,20 @@
                     🚀 生成预览
                   </el-button>
                 </div>
+                
+                <div class="setting-item compact mt-3" style="display: flex; gap: 10px;">
+                  <el-button type="warning" plain size="small" style="flex: 1;" :disabled="!currentBlueprint" @click="exportTask">💾 保存任务进度</el-button>
+                  <el-upload
+                    action="#"
+                    :auto-upload="false"
+                    :on-change="importTask"
+                    :show-file-list="false"
+                    accept=".json"
+                    style="flex: 1;"
+                  >
+                    <el-button type="info" plain size="small" style="width: 100%;">📂 导入任务进度</el-button>
+                  </el-upload>
+                </div>
               </el-card>
             </el-col>
             <el-col :span="16">
@@ -110,20 +124,34 @@
                 <el-button size="small" @click="zoomIn">🔍 +</el-button>
                 <el-button size="small" @click="calculateInitialZoom">适应</el-button>
               </el-button-group>
+              <el-button type="primary" :disabled="!currentBlueprint || selectionRects.length === 0" @click="markSelectionStatus('pending')">标记待建造</el-button>
+              <el-button type="success" :disabled="!currentBlueprint || selectionRects.length === 0" @click="markSelectionStatus('completed')">标记已完成</el-button>
+              <el-button type="warning" plain :disabled="!currentBlueprint || selectionRects.length === 0" @click="markSelectionStatus('ignored')">清除（不建造）</el-button>
+              <el-button type="info" :disabled="!currentBlueprint" @click="planCurrentBlueprint">规划</el-button>
               <el-button type="success" :disabled="busy || !currentBlueprint" @click="startAutoBuild">开始搭建</el-button>
               <el-button type="danger" :disabled="!busy" @click="stopAutoBuild">停止</el-button>
               <el-button size="small" type="primary" link @click="resetProgress">重置</el-button>
             </div>
+            <div class="action-group" style="margin-top: 10px; gap: 8px; flex-wrap: wrap;">
+              <el-tag size="small" type="info">当前选区: {{ selectionRects.length }} 段</el-tag>
+              <el-tag size="small" type="success">待建造: {{ pendingRegionCount }}</el-tag>
+              <el-tag size="small" type="warning">已完成: {{ completedRegionCount }}</el-tag>
+              <el-tag size="small" type="danger">规划状态: {{ planDirty ? '已失效' : '已规划' }}</el-tag>
+            </div>
           </div>
 
           <div class="workspace-area scrollable-workspace" ref="workspaceContainer">
-            <div class="main-canvas-wrapper" :style="wrapperStyle">
+            <div class="main-canvas-wrapper">
               <canvas 
                 ref="previewCanvas" 
                 class="pixel-canvas interactive task-canvas" 
                 :style="getTaskCanvasStyle"
                 @wheel.ctrl.prevent="handleZoom"
-                @click="handleCanvasClick"
+                @mousedown="handleCanvasMouseDown"
+                @mousemove="handleCanvasMouseMove"
+                @mouseup="handleCanvasMouseUp"
+                @mouseleave="handleCanvasMouseUp"
+                @contextmenu.prevent
               ></canvas>
               <div v-if="!currentBlueprint" class="empty-state">先前往“蓝图”页面生成数据</div>
             </div>
@@ -173,7 +201,6 @@
                   <el-button :disabled="busy" type="success" @click="testMove">测试-角色移动</el-button>
                   <el-button :disabled="busy" type="warning" @click="testVision">测试-方块中心</el-button>
                   <el-button :disabled="busy" type="danger" @click="testGetColor">测试-取色</el-button>
-                  <el-button :disabled="busy" type="info" @click="testHorizontalCalibration">白虚影校准(3秒后)</el-button>
                 </div>
                 <div class="debug-info mt-4" v-if="foregroundWindow">
                   <div>标题: {{ foregroundWindow.title }}</div>
@@ -213,7 +240,7 @@
                 </div>
                 <div class="setting-item mt-2">
                   <div class="label">视角阈值 (%)</div>
-                  <el-input-number size="small" v-model="viewAdjustThresholdPercent" :min="1" :max="50" />
+                  <el-input-number size="small" v-model="viewAdjustThresholdPercent" :min="5" :max="50" />
                 </div>
                 <div class="setting-item mt-2">
                   <div class="label">染色失败重试次数</div>
@@ -223,6 +250,10 @@
                   <el-checkbox v-model="debugMode">DEBUG模式</el-checkbox>
                 </div>
                 <el-button size="small" type="primary" class="mt-2" plain>保存坐标校准记录 (TODO)</el-button>
+                <div class="setting-item mt-2">
+                  <div class="label">开始建造快捷键</div>
+                  <el-input v-model="startBuildHotkey" size="small" placeholder="例如 F6 / Ctrl+Enter" style="width: 180px" />
+                </div>
 
                 <div class="timing-panel mt-4">
                   <div class="setting-item">
@@ -284,7 +315,7 @@
         <!-- 关于面板 -->
         <div v-show="activeTab === 'about'" class="panel-content">
           <el-card shadow="never" class="settings-card">
-            <h2>Beta <small>v0.1.0</small></h2>
+            <h2>Beta <small>v0.3.0</small></h2>
             <p>个人主页：<a href="https://space.bilibili.com/2199618" target="_blank" rel="noopener">https://space.bilibili.com/2199618</a></p>
             <p>项目主页：<a href="https://github.com/FlandreSatori/calabiyau-workshop-pixelart" target="_blank" rel="noopener">https://github.com/FlandreSatori/calabiyau-workshop-pixelart</a></p>
           </el-card>
@@ -297,7 +328,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watch } from 'vue';
 import axios from 'axios';
-import { ElMessage, UploadFile } from 'element-plus';
+import { ElMessage, UploadFile, ElMessageBox } from 'element-plus';
 
 type WindowInfo = { hwnd: number; pid: number; exe_name: string; title: string; is_foreground: boolean; };
 
@@ -317,7 +348,7 @@ const debugMode = ref(false);
 
 // Baseline-based view adjust
 const baselineGreenDistance = ref<number | null>(null);
-const viewAdjustThresholdPercent = ref<number>(10); // percent of baseline distance to trigger (默认 10%)
+const viewAdjustThresholdPercent = ref<number>(15); // percent of baseline distance to trigger (默认 15%)
 const viewAdjustNudgeTimeout = ref<number>(0.15); // seconds to hold move for nudge
 const humanizeLevel = ref<number>(1); // default level 1
 
@@ -336,7 +367,7 @@ const placeClickDelay = ref(0.1);
 const moveHoldDelay = ref(0.1);
 const dyeOpenDelay = ref(0.1);
 const dyePasteDelay = ref(0.1);
-const dyeConfirmDelay = ref(0.1);
+const dyeConfirmDelay = ref(0.2);
 const dyeReturnDelay = ref(0.1);
 const uiClickDelay = ref(0.05);
 const uiClipboardDelay = ref(0.05);
@@ -359,21 +390,12 @@ const zoom = ref(1);
 const minZoom = ref(0.1);
 const workspaceContainer = ref<HTMLElement | null>(null);
 
-const wrapperStyle = computed(() => {
+const getTaskCanvasStyle = computed(() => {
   if (!currentBlueprint.value) return {};
   const CELL_SIZE = 20;
   return {
     width: `${currentBlueprint.value.resolution[0] * CELL_SIZE * zoom.value}px`,
     height: `${currentBlueprint.value.resolution[1] * CELL_SIZE * zoom.value}px`,
-    margin: 'auto'
-  };
-});
-
-const getTaskCanvasStyle = computed(() => {
-  if (!currentBlueprint.value) return {};
-  return {
-    width: '100%',
-    height: '100%',
     cursor: 'crosshair',
     imageRendering: 'pixelated' as const
   };
@@ -404,7 +426,6 @@ const zoomIn = () => {
 const zoomOut = () => {
   zoom.value = Math.max(0.05, zoom.value * 0.85);
 };
-
 // Pipeline state
 const pipelineProgress = ref(0);
 const pipelineTotal = ref(0);
@@ -439,35 +460,198 @@ const handleHeightChange = (val: number | undefined) => {
   }
 };
 
-const handleCanvasClick = (event: MouseEvent) => {
-  if (!currentBlueprint.value || !previewCanvas.value) return;
+type Rect = { x0: number; y0: number; x1: number; y1: number };
+type RegionStatus = 'pending' | 'completed' | 'ignored';
+
+const selectionRects = ref<Rect[]>([]);
+const pendingBlocks = ref<Set<string>>(new Set());
+const ignoredBlocks = ref<Set<string>>(new Set());
+const planDirty = ref(true);
+const skippedPlannedBlocks = ref<{ x: number; y: number }[]>([]);
+const startBuildHotkey = ref('F6');
+const isDrawingRegion = ref(false);
+const regionStartCoords = ref<{x: number, y: number} | null>(null);
+const currentDrawCoords = ref<{x: number, y: number} | null>(null);
+const drawMode = ref<'add'|'remove'>('add');
+let clickStartPos = { x: 0, y: 0 };
+
+const pendingRegionCount = computed(() => pendingBlocks.value.size);
+const completedRegionCount = computed(() => completedBlocks.value.size);
+
+const getBlockCoords = (event: MouseEvent): { blockX: number; blockY: number } => {
+  if (!previewCanvas.value) return { blockX: 0, blockY: 0 };
   const rect = previewCanvas.value.getBoundingClientRect();
   const scaleX = previewCanvas.value.width / rect.width;
   const scaleY = previewCanvas.value.height / rect.height;
   const x = (event.clientX - rect.left) * scaleX;
   const y = (event.clientY - rect.top) * scaleY;
-  
   const CELL_SIZE = 20;
-  const blockX = Math.floor(x / CELL_SIZE);
-  const blockY = Math.floor(y / CELL_SIZE);
+  return { blockX: Math.floor(x / CELL_SIZE), blockY: Math.floor(y / CELL_SIZE) };
+};
+
+
+
+const normalizeRect = (rect: Rect): Rect => ({
+  x0: Math.min(rect.x0, rect.x1),
+  y0: Math.min(rect.y0, rect.y1),
+  x1: Math.max(rect.x0, rect.x1),
+  y1: Math.max(rect.y0, rect.y1),
+});
+
+const rectToCells = (rect: Rect) => {
+  const normalized = normalizeRect(rect);
+  const cells: { x: number; y: number }[] = [];
+  for (let y = normalized.y0; y <= normalized.y1; y++) {
+    for (let x = normalized.x0; x <= normalized.x1; x++) {
+      cells.push({ x, y });
+    }
+  }
+  return cells;
+};
+
+const markPlanDirty = () => {
+  planDirty.value = true;
+  skippedPlannedBlocks.value = [];
+};
+
+const commitSelection = (status: RegionStatus) => {
+  if (selectionRects.value.length === 0) return;
+
+  for (const selection of selectionRects.value) {
+    for (const cell of rectToCells(selection)) {
+      const key = `${cell.x},${cell.y}`;
+      pendingBlocks.value.delete(key);
+      completedBlocks.value.delete(key);
+      ignoredBlocks.value.delete(key);
+
+      if (status === 'pending') {
+        pendingBlocks.value.add(key);
+      } else if (status === 'completed') {
+        completedBlocks.value.add(key);
+      } else if (status === 'ignored') {
+        ignoredBlocks.value.add(key);
+      }
+    }
+  }
+
+  selectionRects.value = [];
+  regionStartCoords.value = null;
+  currentDrawCoords.value = null;
+  markPlanDirty();
+  drawBlueprint(currentBlueprint.value, currentPipeline.value);
+};
+
+const markSelectionStatus = (status: RegionStatus) => {
+  commitSelection(status);
+};
+
+const handleCanvasMouseDown = (e: MouseEvent) => {
+  if (!currentBlueprint.value) return;
+  const { blockX, blockY } = getBlockCoords(e);
+  clickStartPos = { x: e.clientX, y: e.clientY };
   
-  // Find index in pipeline
-  findAndJumpToStep(blockX, blockY);
+  if (e.button === 0) { // Left click
+    drawMode.value = 'add';
+    selectionRects.value = []; // Clear previous selection
+  } else {
+    return;
+  }
+  
+  isDrawingRegion.value = true;
+  regionStartCoords.value = { x: blockX, y: blockY };
+  currentDrawCoords.value = { x: blockX, y: blockY };
+};
+
+const handleCanvasMouseMove = (e: MouseEvent) => {
+  if (isDrawingRegion.value) {
+    const { blockX, blockY } = getBlockCoords(e);
+    currentDrawCoords.value = { x: blockX, y: blockY };
+    drawBlueprint(currentBlueprint.value, currentPipeline.value);
+  }
+};
+
+const getPendingBlocksList = () => Array.from(pendingBlocks.value);
+
+const getPlanningCompletedBlocks = () => {
+  return Array.from(completedBlocks.value);
+};
+
+const planCurrentBlueprint = async () => {
+  if (!currentBlueprint.value) return null;
+  try {
+    const planRes = await axios.post(`${API_BASE}/blueprint/plan`, {
+      blueprint: currentBlueprint.value,
+      pending_blocks: getPendingBlocksList(),
+      completed_blocks: getPlanningCompletedBlocks(),
+    });
+    currentPipeline.value = planRes.data.pipeline || [];
+    pipelineProgress.value = 0;
+    pipelineTotal.value = currentPipeline.value.length;
+    skippedPlannedBlocks.value = planRes.data.skipped_blocks || [];
+    planDirty.value = false;
+    drawBlueprint(currentBlueprint.value, currentPipeline.value);
+    addLog(`规划完成，共 ${pipelineTotal.value} 步`);
+    return planRes.data;
+  } catch (error: any) {
+    const errDetailObj = error?.response?.data?.detail;
+    const detail = typeof errDetailObj === 'object' ? (errDetailObj.detail || '规划失败') : (errDetailObj || error?.message || '规划失败');
+    const errorBlocks = typeof errDetailObj === 'object' ? errDetailObj.error_blocks : undefined;
+    
+    if (errorBlocks) {
+      skippedPlannedBlocks.value = errorBlocks;
+      drawBlueprint(currentBlueprint.value, []);
+    }
+    ElMessage.error(detail);
+    addLog(`[规划失败] ${detail}`);
+    return null;
+  }
+};
+
+const handleCanvasMouseUp = (e: MouseEvent) => {
+  if (!isDrawingRegion.value) return;
+  isDrawingRegion.value = false;
+  
+  const dist = Math.hypot(e.clientX - clickStartPos.x, e.clientY - clickStartPos.y);
+  
+  if (dist < 5 && e.button === 0 && regionStartCoords.value) {
+    findAndJumpToStep(regionStartCoords.value.x, regionStartCoords.value.y);
+    selectionRects.value = [];
+    drawBlueprint(currentBlueprint.value, currentPipeline.value);
+  } else if (regionStartCoords.value && currentDrawCoords.value) {
+    const x0 = Math.min(regionStartCoords.value.x, currentDrawCoords.value.x);
+    const x1 = Math.max(regionStartCoords.value.x, currentDrawCoords.value.x);
+    const y0 = Math.min(regionStartCoords.value.y, currentDrawCoords.value.y);
+    const y1 = Math.max(regionStartCoords.value.y, currentDrawCoords.value.y);
+
+    const rect = { x0, y0, x1, y1 };
+    selectionRects.value = [rect];
+    markPlanDirty();
+    drawBlueprint(currentBlueprint.value, currentPipeline.value);
+  } else {
+    regionStartCoords.value = null;
+    currentDrawCoords.value = null;
+    drawBlueprint(currentBlueprint.value, currentPipeline.value);
+  }
+  regionStartCoords.value = null;
+  currentDrawCoords.value = null;
 };
 
 const findAndJumpToStep = async (bx: number, by: number) => {
   if (!currentBlueprint.value) return;
-  // We need the pipeline to know the order
   try {
-    const pipeline = currentPipeline.value.length > 0 ? currentPipeline.value : (await axios.post(`${API_BASE}/blueprint/plan`, { blueprint: currentBlueprint.value })).data.pipeline;
-    if (currentPipeline.value.length === 0) currentPipeline.value = pipeline;
+    if (planDirty.value) {
+      await planCurrentBlueprint();
+    }
+    const pipeline = currentPipeline.value || [];
+    currentPipeline.value = pipeline;
     
-    // Find first place_and_dye step that matches bx, by
     const index = pipeline.findIndex((s: any) => s.type === 'place_and_dye' && s.x === bx && s.y === by);
     if (index !== -1) {
-      pipelineProgress.value = index; // Set progress to just before this block
+      pipelineProgress.value = index;
       drawBlueprint(currentBlueprint.value, pipeline);
       addLog(`已跳转至坐标 (${bx}, ${by})，下一步将从此处开始`);
+    } else {
+      addLog(`点选的方块 (${bx}, ${by}) 不在区域规划中，建议重新框选或直接点击给定的起始蓝色方块。`);
     }
   } catch(e) {}
 };
@@ -475,7 +659,9 @@ const findAndJumpToStep = async (bx: number, by: number) => {
 const resetProgress = () => {
   pipelineProgress.value = 0;
   completedBlocks.value.clear();
-  drawBlueprint(currentBlueprint.value);
+  planDirty.value = true;
+  skippedPlannedBlocks.value = [];
+  drawBlueprint(currentBlueprint.value, currentPipeline.value);
   addLog('已重置任务进度');
 };
 
@@ -533,31 +719,12 @@ watch(debugMode, (enabled) => {
   }
 });
 
-const calibrateHorizontal = async (manual = false) => {
-  if (manual) {
-    await prepareWindowFocus();
-  }
-
-  addLog('[校准] 3秒后开始白虚影水平校准，请切到游戏并保持画面稳定...');
-  await new Promise((r) => setTimeout(r, 3000));
-
-  const res = await axios.post(`${API_BASE}/vision/calibrate-horizontal-white`, {
-    ...getTargetPayload(),
-    roi_size: 315
-  });
-  const data = res.data || {};
-  if (data.status !== 'success') {
-    throw new Error(data.detail || '白虚影水平校准失败');
-  }
-  addLog(`[校准] 完成，来源 ${data.source || 'unknown'}，误差 ${Number(data.horizontal_error || 0).toFixed(2)}°`);
-};
-
 const connectWebSocket = () => {
   ws = new WebSocket('ws://127.0.0.1:8000/api/ws/logs');
   ws.onmessage = (event) => addBackendLog(event.data);
   ws.onclose = () => {
-    addLog(`WebSocket 已断开，5秒后重连...`);
-    setTimeout(connectWebSocket, 5000);
+    addLog(`WebSocket 已断开，3秒后重连...`);
+    setTimeout(connectWebSocket, 3000);
   };
 };
 
@@ -612,8 +779,7 @@ const drawBlueprint = (bp: any, pipeline: any[] = []) => {
     
     let nextStepCoords: string | null = null;
     
-    // Always fallback to currentPipeline.value if pipeline array is empty
-    const activePipeline = pipeline.length > 0 ? pipeline : currentPipeline.value;
+    const activePipeline = !planDirty.value ? (pipeline.length > 0 ? pipeline : currentPipeline.value) : [];
     
     if (!isStatic && activePipeline.length > 0) {
       // Find the next step to execute
@@ -632,12 +798,84 @@ const drawBlueprint = (bp: any, pipeline: any[] = []) => {
       
       if (!isStatic) {
         const key = `${block.x},${block.y}`;
-        if (completedBlocks.value.has(key)) {
-          ctx.fillStyle = "rgba(0, 255, 0, 0.4)";
+        const isCompleted = completedBlocks.value.has(key);
+        const isPending = pendingBlocks.value.has(key);
+
+        if (isCompleted) {
+          ctx.fillStyle = 'rgba(92, 219, 149, 0.4)';
           ctx.fillRect(block.x * CELL_SIZE, block.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
-        } else if (key === nextStepCoords) {
-          ctx.fillStyle = "rgba(0, 150, 255, 0.7)"; // Blue for next target
+        }
+
+        if (isPending) {
+          ctx.save();
+          ctx.strokeStyle = 'black';
+          ctx.lineWidth = 3;
+          ctx.lineCap = 'round';
+          const bx = block.x * CELL_SIZE;
+          const by = block.y * CELL_SIZE;
+          
+          if (!pendingBlocks.value.has(`${block.x},${block.y - 1}`)) {
+            ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + CELL_SIZE, by); ctx.stroke();
+          }
+          if (!pendingBlocks.value.has(`${block.x + 1},${block.y}`)) {
+            ctx.beginPath(); ctx.moveTo(bx + CELL_SIZE, by); ctx.lineTo(bx + CELL_SIZE, by + CELL_SIZE); ctx.stroke();
+          }
+          if (!pendingBlocks.value.has(`${block.x},${block.y + 1}`)) {
+            ctx.beginPath(); ctx.moveTo(bx, by + CELL_SIZE); ctx.lineTo(bx + CELL_SIZE, by + CELL_SIZE); ctx.stroke();
+          }
+          if (!pendingBlocks.value.has(`${block.x - 1},${block.y}`)) {
+            ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx, by + CELL_SIZE); ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        if (key === nextStepCoords) {
+          ctx.fillStyle = 'rgba(0, 150, 255, 0.7)';
           ctx.fillRect(block.x * CELL_SIZE, block.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+        }
+      }
+    }
+
+    if (!isStatic) {
+      for (const rect of selectionRects.value) {
+        const width = (rect.x1 - rect.x0 + 1) * CELL_SIZE;
+        const height = (rect.y1 - rect.y0 + 1) * CELL_SIZE;
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = 'rgba(120, 190, 255, 0.95)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rect.x0 * CELL_SIZE, rect.y0 * CELL_SIZE, width, height);
+        ctx.restore();
+      }
+
+      if (activePipeline.length > 0) {
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(255, 140, 0, 0.95)';
+        ctx.lineWidth = 3;
+        let firstPoint = true;
+        for (let i = 0; i < activePipeline.length; i++) {
+          const tempStep = activePipeline[i];
+          if (tempStep.type === 'place_and_dye') {
+            const cx = tempStep.x * CELL_SIZE + CELL_SIZE / 2;
+            const cy = tempStep.y * CELL_SIZE + CELL_SIZE / 2;
+            if (firstPoint) {
+              ctx.moveTo(cx, cy);
+              firstPoint = false;
+            } else {
+              ctx.lineTo(cx, cy);
+            }
+          }
+        }
+        ctx.stroke();
+
+        for (const skipped of skippedPlannedBlocks.value) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(255, 0, 0, 0.6)';
+          ctx.fillRect(skipped.x * CELL_SIZE, skipped.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+          ctx.strokeStyle = '#ff0000';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(skipped.x * CELL_SIZE, skipped.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+          ctx.restore();
         }
       }
     }
@@ -657,10 +895,101 @@ const drawBlueprint = (bp: any, pipeline: any[] = []) => {
       }
       ctx.stroke();
     }
+
+    // Draw current drag region
+    if (!isStatic && isDrawingRegion.value && regionStartCoords.value && currentDrawCoords.value) {
+      const rx0 = Math.min(regionStartCoords.value.x, currentDrawCoords.value.x);
+      const rx1 = Math.max(regionStartCoords.value.x, currentDrawCoords.value.x);
+      const ry0 = Math.min(regionStartCoords.value.y, currentDrawCoords.value.y);
+      const ry1 = Math.max(regionStartCoords.value.y, currentDrawCoords.value.y);
+      
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = drawMode.value === 'add' ? 'rgba(120, 190, 255, 0.95)' : 'rgba(255, 120, 120, 0.95)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(rx0 * CELL_SIZE, ry0 * CELL_SIZE, (rx1 - rx0 + 1) * CELL_SIZE, (ry1 - ry0 + 1) * CELL_SIZE);
+      ctx.restore();
+    }
   });
 };
 
 const currentPipeline = ref<any[]>([]);
+
+const exportTask = async () => {
+  if (!currentBlueprint.value) return;
+  const data = JSON.stringify({
+    blueprint: currentBlueprint.value,
+    pipelineProgress: pipelineProgress.value,
+    completedBlocks: Array.from(completedBlocks.value),
+    currentPipeline: currentPipeline.value,
+    selectionRects: selectionRects.value,
+    pendingBlocks: Array.from(pendingBlocks.value),
+    ignoredBlocks: Array.from(ignoredBlocks.value),
+    planDirty: planDirty.value,
+  }, null, 2);
+
+  try {
+    if ('showSaveFilePicker' in window) {
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: `calabiyau-task-${new Date().getTime()}.json`,
+        types: [{
+          description: 'JSON File',
+          accept: { 'application/json': ['.json'] },
+        }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(data);
+      await writable.close();
+      ElMessage.success('任务进度已成功保存');
+    } else {
+      // Fallback for browsers that don't support showSaveFilePicker
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `calabiyau-task-${new Date().getTime()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      ElMessage.success('任务进度已下载到本地');
+    }
+  } catch (err: any) {
+    if (err.name !== 'AbortError') {
+      ElMessage.error(`保存失败: ${err.message}`);
+    }
+  }
+};
+
+const importTask = (file: UploadFile) => {
+  if (!file || !file.raw) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target?.result as string);
+      currentBlueprint.value = data.blueprint;
+      pipelineProgress.value = data.pipelineProgress || 0;
+      completedBlocks.value = new Set(data.completedBlocks || []);
+      currentPipeline.value = data.currentPipeline || [];
+      selectionRects.value = data.selectionRects || [];
+      pendingBlocks.value = new Set(data.pendingBlocks || []);
+      ignoredBlocks.value = new Set(data.ignoredBlocks || []);
+      planDirty.value = data.planDirty ?? currentPipeline.value.length === 0;
+      skippedPlannedBlocks.value = [];
+      
+      bpWidth.value = data.blueprint.resolution[0];
+      bpHeight.value = data.blueprint.resolution[1];
+      
+      drawBlueprint(currentBlueprint.value, currentPipeline.value);
+      nextTick(() => { calculateInitialZoom(); });
+      ElMessage.success('任务进度已导入');
+      activeTab.value = 'task'; // Switch to task tab automatically
+    } catch (err: any) {
+      ElMessage.error(`导入失败: ${err.message}`);
+    }
+  };
+  reader.readAsText(file.raw);
+};
 
 const generateBlueprint = async () => {
   if (!uploadedFile.value) return;
@@ -676,10 +1005,10 @@ const generateBlueprint = async () => {
     const res = await axios.post(`${API_BASE}/blueprint/process`, formData);
     if (res.data.status === 'success') {
       currentBlueprint.value = res.data.blueprint;
-      // Get initial pipeline to draw grid and potential progress
-      const planRes = await axios.post(`${API_BASE}/blueprint/plan`, { blueprint: currentBlueprint.value });
-      currentPipeline.value = planRes.data.pipeline;
-      drawBlueprint(currentBlueprint.value, currentPipeline.value);
+      currentPipeline.value = [];
+      planDirty.value = true;
+      skippedPlannedBlocks.value = [];
+      drawBlueprint(currentBlueprint.value, []);
       nextTick(() => { calculateInitialZoom(); });
       ElMessage.success('蓝图处理完成');
     }
@@ -716,12 +1045,44 @@ const startAutoBuild = async () => {
   shouldStop.value = false;
   
   try {
-    addLog('正在向服务端请求计划...');
-    const planRes = await axios.post(`${API_BASE}/blueprint/plan`, { blueprint: currentBlueprint.value });
-    const pipeline = planRes.data.pipeline;
-    currentPipeline.value = pipeline;
+    if (planDirty.value || currentPipeline.value.length === 0) {
+      addLog('正在向服务端请求计划...');
+      const planData = await planCurrentBlueprint();
+      if (!planData) {
+        busy.value = false;
+        return;
+      }
+
+      if (planData.is_fallback) {
+        try {
+          await ElMessageBox.confirm(
+            '选区为空或已完成，是否搭建剩余未完成的区域？',
+            '提示',
+            {
+              confirmButtonText: '确定',
+              cancelButtonText: '取消',
+              type: 'info',
+            }
+          );
+        } catch (err) {
+          addLog('用户取消自动搭建剩余区域。');
+          busy.value = false;
+          return;
+        }
+      }
+    }
+
+    const pipeline = currentPipeline.value;
+    pipelineProgress.value = 0;
     pipelineTotal.value = pipeline.length;
     
+    if (pipeline.length === 0) {
+      addLog('没有需要搭建的方块，自动搭建结束。');
+      busy.value = false;
+      return;
+    }
+    
+    drawBlueprint(currentBlueprint.value, pipeline);
     addLog(`计划就绪，共 ${pipelineTotal.value} 步`);
     await prepareWindowFocus();
     // 记录基线绿色标记距离，用于后续任务中检测视角偏移并用 W/S 微调
@@ -852,7 +1213,10 @@ const startAutoBuild = async () => {
           // 1. 执行正常的初次染色主流程
           await executeDye();
           
-          completedBlocks.value.add(`${step.x},${step.y}`);
+          const key = `${step.x},${step.y}`;
+          completedBlocks.value.add(key);
+          pendingBlocks.value.delete(key);
+          ignoredBlocks.value.delete(key);
           drawBlueprint(currentBlueprint.value, pipeline);
 
           // 2. 闭包工厂：为当前方块绑定隔离的回退计数器，阻断与下一个方块的相互污染
@@ -950,10 +1314,25 @@ const stopAutoBuild = async () => {
 // ----------------------
 const formatWindowLabel = (w: WindowInfo) => `${w.title} (${w.exe_name || '未知'})${w.is_foreground ? ' [前台]' : ''}`;
 
+const refreshWindows = async () => {
+  try {
+    const res = await axios.get(`${API_BASE}/system/windows`);
+    windowOptions.value = res.data.windows || [];
+    if (!selectedWindowHwnd.value || !windowOptions.value.some((w) => w.hwnd === selectedWindowHwnd.value)) {
+      const target = windowOptions.value.find((window) => window.title.includes('卡拉彼丘')) || windowOptions.value[0];
+      if (target) {
+        selectedWindowHwnd.value = target.hwnd;
+      }
+    }
+  } catch (e: any) {
+    ElMessage.error('无法获取窗口列表');
+  }
+};
+
 const selectCalabiyau = async () => {
   await refreshWindows();
-  const target = windowOptions.value.find(w => 
-    (w.exe_name && w.exe_name.toLowerCase().includes('calabiyau')) && w.title.includes('卡拉彼丘')
+  const target = windowOptions.value.find((window) =>
+    (window.exe_name && window.exe_name.toLowerCase().includes('calabiyau')) && window.title.includes('卡拉彼丘')
   );
   if (target) {
     selectedWindowHwnd.value = target.hwnd;
@@ -964,29 +1343,23 @@ const selectCalabiyau = async () => {
   }
 };
 
-const refreshWindows = async () => {
-  try {
-    const res = await axios.get(`${API_BASE}/system/windows`);
-    windowOptions.value = res.data.windows || [];
-    if (!selectedWindowHwnd.value || !windowOptions.value.some((w) => w.hwnd === selectedWindowHwnd.value)) {
-      const target = windowOptions.value.find((w) => w.title.includes('卡拉彼丘')) || windowOptions.value[0];
-      if (target) { selectedWindowHwnd.value = target.hwnd; }
-    }
-  } catch (e: any) { ElMessage.error('无法获取窗口列表'); }
-};
-
 const tryActivateTargetWindow = async () => {
   if (!autoActivateWindow.value || !selectedWindowHwnd.value) return false;
   try {
-    const res = await axios.post(`${API_BASE}/system/activate`, { hwnd: selectedWindowHwnd.value, exe_name: selectedWindow.value?.exe_name });
+    const res = await axios.post(`${API_BASE}/system/activate`, {
+      hwnd: selectedWindowHwnd.value,
+      exe_name: selectedWindow.value?.exe_name,
+    });
     return res.data?.status === 'success';
-  } catch (e: any) { return false; }
+  } catch (e: any) {
+    return false;
+  }
 };
 
 const waitForManualSwitch = async () => {
   for (let i = delaySeconds.value; i > 0; i--) {
     addLog(`请在 ${i} 秒内手动切换到目标窗口...`);
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 };
 
@@ -1034,16 +1407,7 @@ const testGetColor = async () => {
   } catch (e: any) {}
 };
 
-const testHorizontalCalibration = async () => {
-  try {
-    busy.value = true;
-    await calibrateHorizontal(true);
-  } catch (e: any) {
-    handleApiError(e);
-  } finally {
-    busy.value = false;
-  }
-};
+
 
 const refreshForegroundWindow = async () => {
   try {
@@ -1052,16 +1416,47 @@ const refreshForegroundWindow = async () => {
   } catch (e) {}
 };
 
+const handleGlobalKeydown = (e: KeyboardEvent) => {
+  const hotkey = startBuildHotkey.value?.trim().toLowerCase();
+  if (!hotkey) return;
+
+  const parts = hotkey.replace(/ /g, '').split('+');
+  const needsCtrl = parts.includes('ctrl');
+  const needsAlt = parts.includes('alt');
+  const needsShift = parts.includes('shift');
+  const key = parts[parts.length - 1];
+
+  const isCtrl = e.ctrlKey || e.metaKey;
+  const isAlt = e.altKey;
+  const isShift = e.shiftKey;
+
+  if (
+    isCtrl === needsCtrl &&
+    isAlt === needsAlt &&
+    isShift === needsShift &&
+    e.key.toLowerCase() === key
+  ) {
+    e.preventDefault();
+    if (busy.value) {
+      stopAutoBuild();
+    } else if (currentBlueprint.value) {
+      startAutoBuild();
+    }
+  }
+};
+
 onMounted(() => {
   refreshWindows();
   refreshForegroundWindow();
   connectWebSocket();
   foregroundTimer = window.setInterval(refreshForegroundWindow, 1000);
+  window.addEventListener('keydown', handleGlobalKeydown);
 });
 
 onBeforeUnmount(() => {
   if (foregroundTimer) window.clearInterval(foregroundTimer);
   if (ws) ws.close();
+  window.removeEventListener('keydown', handleGlobalKeydown);
 });
 </script>
 

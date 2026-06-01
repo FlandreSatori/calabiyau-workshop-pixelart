@@ -2,6 +2,7 @@ import subprocess
 import sys
 import os
 import time
+import socket
 import ctypes
 
 
@@ -110,6 +111,22 @@ def start_frontend(base_dir: str) -> subprocess.Popen:
     print("Starting Tauri frontend (development mode)...")
     return subprocess.Popen(["npm", "run", "tauri", "dev"], cwd=frontend_dir, shell=True)
 
+def wait_for_port(port, host='127.0.0.1', timeout=10):
+    """动态检测端口是否开放，每 0.5 秒测一次，最多等 timeout 秒"""
+    start_time = time.time()
+    while True:
+        try:
+            # 尝试建立 TCP 连接
+            with socket.create_connection((host, port), timeout=1):
+                print(f"🎉 检测到端口 {port} 已成功开放！")
+                return True
+        except (ValueError, OSError):
+            if time.time() - start_time > timeout:
+                print(f"❌ 错误：等待端口 {port} 超时，后端可能启动失败了。")
+                return False
+            print(f"⏳ 后端仍在启动中，正在等待端口 {port}...")
+            time.sleep(0.5)
+
 def main():
     relaunch_as_admin()
 
@@ -118,9 +135,11 @@ def main():
     frontend_proc = None
     
     try:
-        time.sleep(5)
-        frontend_proc = start_frontend(base_dir)
-        frontend_proc.wait()
+        if wait_for_port(8000, timeout=15):
+            frontend_proc = start_frontend(base_dir)
+            frontend_proc.wait()
+        else:
+            print("后端启动失败，无法启动前端。")
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
