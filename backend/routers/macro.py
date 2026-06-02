@@ -1,4 +1,5 @@
 import time
+import traceback
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Any
@@ -75,43 +76,82 @@ def ensure_game_active(exe_name: str, window_hwnd: int | None = None, settle_del
 
 @router.post("/dye")
 def dye_block(req: DyeRequest, dd: Any = Depends(get_dd)):
-    ensure_game_active(req.exe_name, req.window_hwnd, req.focus_settle_delay)
-    
-    ui = UIInteraction(dd, req.exe_name, humanize_level=req.humanize_level)
-    
-    if not req.repaste_only:
-        # Switch back to iron plate (slot 1) before dyeing
-        dd.key_press("1")
-        time.sleep(req.dye_return_delay)
-
-        ui.open_color_panel()
-        time.sleep(req.dye_open_delay)
-    
-    # Pass down the granular delays
-    ui.paste_hex_color(
-        req.color_input_x, 
-        req.color_input_y, 
-        req.hex_color,
-        click_delay=req.ui_click_delay,
-        clipboard_delay=req.ui_clipboard_delay
+    req_ctx = (
+        f"color={req.hex_color} repaste_only={req.repaste_only} "
+        f"target=({req.color_input_x},{req.color_input_y}) hwnd={req.window_hwnd}"
     )
-    time.sleep(req.dye_paste_delay)
-    
-    if req.confirm_button_x and req.confirm_button_y:
-        ui.click_confirm(req.confirm_button_x, req.confirm_button_y, click_delay=req.ui_click_delay)
-        time.sleep(req.dye_confirm_delay)
-        time.sleep(req.focus_settle_delay)
+    start = time.perf_counter()
+    print(f"[macro.dye] start {req_ctx}")
+    try:
+        ensure_game_active(req.exe_name, req.window_hwnd, req.focus_settle_delay)
 
-    return {"status": "success", "color": req.hex_color}
+        ui = UIInteraction(dd, req.exe_name, humanize_level=req.humanize_level)
+
+        if not req.repaste_only:
+            print("[macro.dye] switch slot to 1 and open dye panel")
+            # Switch back to iron plate (slot 1) before dyeing
+            dd.key_press("1")
+            time.sleep(req.dye_return_delay)
+
+            ui.open_color_panel()
+            time.sleep(req.dye_open_delay)
+
+        print("[macro.dye] paste hex color")
+        # Pass down the granular delays
+        ui.paste_hex_color(
+            req.color_input_x,
+            req.color_input_y,
+            req.hex_color,
+            click_delay=req.ui_click_delay,
+            clipboard_delay=req.ui_clipboard_delay,
+        )
+        time.sleep(req.dye_paste_delay)
+
+        if req.confirm_button_x and req.confirm_button_y:
+            print(
+                "[macro.dye] optional inline confirm at "
+                f"({req.confirm_button_x},{req.confirm_button_y})"
+            )
+            ui.click_confirm(req.confirm_button_x, req.confirm_button_y, click_delay=req.ui_click_delay)
+            time.sleep(req.dye_confirm_delay)
+            time.sleep(req.focus_settle_delay)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        print(f"[macro.dye] success {req_ctx} elapsed={elapsed_ms:.1f}ms")
+        return {"status": "success", "color": req.hex_color}
+    except HTTPException as exc:
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        print(
+            f"[macro.dye] http_error status={exc.status_code} detail={exc.detail} "
+            f"elapsed={elapsed_ms:.1f}ms {req_ctx}"
+        )
+        raise
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        print(f"[macro.dye] unexpected_error elapsed={elapsed_ms:.1f}ms {req_ctx}: {exc!r}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"macro_dye_failed: {type(exc).__name__}: {exc}")
 
 @router.post("/dye-confirm")
 def dye_confirm(req: DyeConfirmRequest, dd: Any = Depends(get_dd)):
-    ensure_game_active(req.exe_name, req.window_hwnd, req.focus_settle_delay)
-    ui = UIInteraction(dd, req.exe_name, humanize_level=req.humanize_level)
-    ui.click_confirm(req.confirm_button_x, req.confirm_button_y, click_delay=req.ui_click_delay)
-    time.sleep(req.dye_confirm_delay)
-    time.sleep(req.focus_settle_delay)
-    return {"status": "success"}
+    req_ctx = (
+        f"confirm=({req.confirm_button_x},{req.confirm_button_y}) hwnd={req.window_hwnd}"
+    )
+    print(f"[macro.dye-confirm] start {req_ctx}")
+    try:
+        ensure_game_active(req.exe_name, req.window_hwnd, req.focus_settle_delay)
+        ui = UIInteraction(dd, req.exe_name, humanize_level=req.humanize_level)
+        ui.click_confirm(req.confirm_button_x, req.confirm_button_y, click_delay=req.ui_click_delay)
+        time.sleep(req.dye_confirm_delay)
+        time.sleep(req.focus_settle_delay)
+        print(f"[macro.dye-confirm] success {req_ctx}")
+        return {"status": "success"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[macro.dye-confirm] unexpected_error {req_ctx}: {exc!r}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"macro_dye_confirm_failed: {type(exc).__name__}: {exc}")
 
 @router.post("/place")
 def place_block(req: ActionRequest, dd: Any = Depends(get_dd)):

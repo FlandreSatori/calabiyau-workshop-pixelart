@@ -3,6 +3,8 @@ import sys
 from typing import List
 from fastapi import WebSocket
 
+from backend.request_context import get_request_id
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -60,6 +62,9 @@ class _StdoutBridge:
         message = line.strip()
         if not message:
             return
+        req_id = get_request_id()
+        if req_id and f"[req:{req_id}]" not in message and not message.startswith("[HTTP]["):
+            message = f"[req:{req_id}] {message}"
         if manager.loop and manager.loop.is_running():
             asyncio.run_coroutine_threadsafe(manager.broadcast(message), manager.loop)
 

@@ -1,4 +1,5 @@
 import time
+import traceback
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -30,25 +31,51 @@ class WhiteGhostCalibrationRequest(BaseGameRequest):
     fine_max_step: int = Field(8, ge=1, le=100)
 
 @router.post("/get-color")
-def get_pixel_color(req: GetColorRequest):
-    # 1. 获取屏幕桌面的设备上下文 (DC)
-    hdc = win32gui.GetDC(0)
-    
-    # 2. 抓取目标坐标点的 32位 颜色值 (COLORREF)
-    pixel = win32gui.GetPixel(hdc, req.x, req.y)
-    
-    # 3. 及时释放 DC 资源，防止句柄泄露导致系统卡顿
-    win32gui.ReleaseDC(0, hdc)
-    
-    # 4. COLORREF 默认是 BGR 格式，需要转换为前端常用的 RGB 格式
-    b = (pixel >> 16) & 0xFF
-    g = (pixel >> 8) & 0xFF
-    r = pixel & 0xFF
-    
-    # 5. 格式化为前端要求的 HEX 字符串（如 #FFFFFF）
-    hex_color = f"#{r:02X}{g:02X}{b:02X}"
-    
-    return {"status": "success", "color": hex_color if hex_color else None}
+def get_pixel_color(req: GetColorRequest, vision: Any = Depends(get_vision)):
+    start = time.perf_counter()
+    print(f"[vision.get-color] start x={req.x} y={req.y}")
+
+    try:
+        # 优先使用 mss 采样，避免直接 GDI 调用带来的不稳定性。
+        try:
+            region = {"left": int(req.x), "top": int(req.y), "width": 1, "height": 1}
+            shot = vision.sct.grab(region)
+            b, g, r = shot.pixel(0, 0)
+            source = "mss"
+        except Exception as mss_exc:
+            print(f"[vision.get-color] mss_failed, fallback_to_gdi: {mss_exc!r}")
+
+            hdc = win32gui.GetDC(0)
+            if not hdc:
+                raise RuntimeError("GetDC returned null handle")
+            try:
+                pixel = win32gui.GetPixel(hdc, req.x, req.y)
+            finally:
+                win32gui.ReleaseDC(0, hdc)
+
+            if pixel == -1:
+                raise RuntimeError("GetPixel returned -1")
+
+            b = (pixel >> 16) & 0xFF
+            g = (pixel >> 8) & 0xFF
+            r = pixel & 0xFF
+            source = "gdi"
+
+        hex_color = f"#{r:02X}{g:02X}{b:02X}"
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        print(
+            f"[vision.get-color] success source={source} x={req.x} y={req.y} "
+            f"color={hex_color} elapsed={elapsed_ms:.1f}ms"
+        )
+        return {"status": "success", "color": hex_color, "source": source}
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        print(
+            f"[vision.get-color] failed x={req.x} y={req.y} "
+            f"elapsed={elapsed_ms:.1f}ms error={exc!r}"
+        )
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"vision_get_color_failed: {type(exc).__name__}: {exc}")
 
 @router.post("/analyze-green")
 def analyze_green(req: AnalyzeRequest, vision: Any = Depends(get_vision)):

@@ -3,12 +3,16 @@ import argparse
 import sys
 import ctypes
 import os
+import time
+import traceback
+from uuid import uuid4
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.log_manager import manager, install_stdout_bridge, set_broadcast_loop
+from backend.request_context import reset_request_id, set_request_id
 
 install_stdout_bridge()
 
@@ -29,6 +33,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_http_requests(request: Request, call_next):
+    req_id = str(uuid4())[:8]
+    start = time.perf_counter()
+    token = set_request_id(req_id)
+    client_host = request.client.host if request.client else "-"
+    print(f"[HTTP][{req_id}] -> {request.method} {request.url.path} from {client_host}")
+    try:
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        response.headers["X-Request-ID"] = req_id
+        print(
+            f"[HTTP][{req_id}] <- {response.status_code} {request.method} "
+            f"{request.url.path} {elapsed_ms:.1f}ms"
+        )
+        return response
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        print(
+            f"[HTTP][{req_id}] !! {request.method} {request.url.path} "
+            f"failed after {elapsed_ms:.1f}ms: {exc!r}"
+        )
+        print(traceback.format_exc())
+        raise
+    finally:
+        reset_request_id(token)
 
 
 # 业务接口托管

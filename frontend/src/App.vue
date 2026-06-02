@@ -252,7 +252,20 @@
                 <el-button size="small" type="primary" class="mt-2" plain>保存坐标校准记录 (TODO)</el-button>
                 <div class="setting-item mt-2">
                   <div class="label">开始建造快捷键</div>
-                  <el-input v-model="startBuildHotkey" size="small" placeholder="例如 F6 / Ctrl+Enter" style="width: 180px" />
+                  <el-input :model-value="startBuildHotkey" size="small" readonly style="width: 180px" />
+                  <el-button
+                    size="small"
+                    type="primary"
+                    plain
+                    class="ml-2"
+                    @click="startHotkeyCapture"
+                  >{{ isCapturingHotkey ? '录制中...' : '点击录制' }}</el-button>
+                </div>
+                <div class="setting-item mt-1" v-if="isCapturingHotkey">
+                  <div class="label">录制状态</div>
+                  <span style="color: #d97706; font-size: 12px;">
+                    当前输入: {{ pendingHotkey || '（等待按键）' }}，按 Enter 确认，Esc 取消
+                  </span>
                 </div>
 
                 <div class="timing-panel mt-4">
@@ -315,7 +328,7 @@
         <!-- 关于面板 -->
         <div v-show="activeTab === 'about'" class="panel-content">
           <el-card shadow="never" class="settings-card">
-            <h2>Beta <small>v0.3.0</small></h2>
+            <h2>Beta <small>v0.3.1</small></h2>
             <p>个人主页：<a href="https://space.bilibili.com/2199618" target="_blank" rel="noopener">https://space.bilibili.com/2199618</a></p>
             <p>项目主页：<a href="https://github.com/FlandreSatori/calabiyau-workshop-pixelart" target="_blank" rel="noopener">https://github.com/FlandreSatori/calabiyau-workshop-pixelart</a></p>
           </el-card>
@@ -327,7 +340,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watch } from 'vue';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import { ElMessage, UploadFile, ElMessageBox } from 'element-plus';
 
 type WindowInfo = { hwnd: number; pid: number; exe_name: string; title: string; is_foreground: boolean; };
@@ -468,7 +481,9 @@ const pendingBlocks = ref<Set<string>>(new Set());
 const ignoredBlocks = ref<Set<string>>(new Set());
 const planDirty = ref(true);
 const skippedPlannedBlocks = ref<{ x: number; y: number }[]>([]);
-const startBuildHotkey = ref('F6');
+const startBuildHotkey = ref('ctrl+F6');
+const isCapturingHotkey = ref(false);
+const pendingHotkey = ref('');
 const isDrawingRegion = ref(false);
 const regionStartCoords = ref<{x: number, y: number} | null>(null);
 const currentDrawCoords = ref<{x: number, y: number} | null>(null);
@@ -709,6 +724,24 @@ const addBackendLog = (msg: string) => {
   }
   backendLogBuffer.value.push(line);
   if (backendLogBuffer.value.length > 1000) backendLogBuffer.value.shift();
+};
+
+const formatAxiosError = (e: any): string => {
+  const err = e as AxiosError<any>;
+  const status = err.response?.status;
+  const method = err.config?.method?.toUpperCase();
+  const url = err.config?.url;
+  const code = err.code;
+  const detail = err.response?.data?.detail || err.message || 'Unknown error';
+  const requestId = (err.response?.headers as any)?.['x-request-id'];
+
+  const parts = [`detail=${detail}`];
+  if (status != null) parts.push(`status=${status}`);
+  if (code) parts.push(`code=${code}`);
+  if (method) parts.push(`method=${method}`);
+  if (url) parts.push(`url=${url}`);
+  if (requestId) parts.push(`requestId=${requestId}`);
+  return parts.join(' | ');
 };
 
 watch(debugMode, (enabled) => {
@@ -1073,7 +1106,6 @@ const startAutoBuild = async () => {
     }
 
     const pipeline = currentPipeline.value;
-    pipelineProgress.value = 0;
     pipelineTotal.value = pipeline.length;
     
     if (pipeline.length === 0) {
@@ -1081,9 +1113,13 @@ const startAutoBuild = async () => {
       busy.value = false;
       return;
     }
+
+    const maxStartIndex = Math.max(0, pipeline.length - 1);
+    const startIndex = Math.min(Math.max(pipelineProgress.value, 0), maxStartIndex);
+    pipelineProgress.value = startIndex;
     
     drawBlueprint(currentBlueprint.value, pipeline);
-    addLog(`计划就绪，共 ${pipelineTotal.value} 步`);
+    addLog(`计划就绪，共 ${pipelineTotal.value} 步，将从第 ${startIndex + 1} 步开始`);
     await prepareWindowFocus();
     // 记录基线绿色标记距离，用于后续任务中检测视角偏移并用 W/S 微调
     try {
@@ -1101,7 +1137,7 @@ const startAutoBuild = async () => {
     }
 
     // 遍历步骤的经典大循环
-    for (let i = pipelineProgress.value; i < pipeline.length; i++) {
+    for (let i = startIndex; i < pipeline.length; i++) {
       if (shouldStop.value) {
         addLog('收到用户停止命令，任务中断。');
         break;
@@ -1161,20 +1197,39 @@ const startAutoBuild = async () => {
 
             const dyeWithVerify = async (isRepaste = false) => {
               // 染色核心宏：执行粘贴逻辑
-              await axios.post(`${API_BASE}/macro/dye`, {
+              const dyePayload = {
                 ...getTargetPayload(),
                 hex_color: step.color,
                 color_input_x: configPaletteX.value,
                 color_input_y: configPaletteY.value,
                 repaste_only: isRepaste
-              });
+              };
+              addLog(`[Dye] 请求 /macro/dye color=${step.color} repaste=${isRepaste}`);
+              try {
+                const dyeRes = await axios.post(`${API_BASE}/macro/dye`, dyePayload);
+                const reqId = (dyeRes.headers as any)?.['x-request-id'];
+                if (reqId) addLog(`[Dye] /macro/dye 成功 requestId=${reqId}`);
+              } catch (err: any) {
+                addLog(`[Dye] /macro/dye 失败 ${formatAxiosError(err)}`);
+                throw err;
+              }
 
               // 染色后取色校验
               const targetColor = step.color.toUpperCase();
-              const verifyRes = await axios.post(`${API_BASE}/vision/get-color`, {
-                x: configVerifyX.value,
-                y: configVerifyY.value
-              });
+              let verifyRes;
+              try {
+                verifyRes = await axios.post(`${API_BASE}/vision/get-color`, {
+                  x: configVerifyX.value,
+                  y: configVerifyY.value
+                });
+              } catch (verifyErr: any) {
+                addLog(`[Verify] /vision/get-color 首次失败，准备重试: ${formatAxiosError(verifyErr)}`);
+                await new Promise(r => setTimeout(r, 120));
+                verifyRes = await axios.post(`${API_BASE}/vision/get-color`, {
+                  x: configVerifyX.value,
+                  y: configVerifyY.value
+                });
+              }
               const actualColor = verifyRes.data.color.toUpperCase();
               const isValidColor = !(/^#(000000|222222|FFFFFF)$/i.test(actualColor));
               const isSameColor = actualColor === targetColor;
@@ -1370,7 +1425,7 @@ const prepareWindowFocus = async () => {
 
 const handleApiError = (e: any) => {
   const status = e.response?.status;
-  const detail = e.response?.data?.detail || e.message;
+  const detail = formatAxiosError(e);
   if (status === 409) {
       addLog(`操作因游戏掉失焦点中断: ${detail}`);
       ElMessage.warning('前台窗口不是目标窗口，任务已终止');
@@ -1416,26 +1471,101 @@ const refreshForegroundWindow = async () => {
   } catch (e) {}
 };
 
+const normalizeKeyToken = (token: string): string => {
+  const t = token.trim().toLowerCase();
+  if (!t) return '';
+  if (t === 'control') return 'ctrl';
+  if (t === 'meta' || t === 'cmd' || t === 'command') return 'ctrl';
+  if (t === ' ') return 'space';
+  if (t.startsWith('arrow')) return t.replace('arrow', '');
+  return t;
+};
+
+const normalizeHotkeyString = (raw: string): string => {
+  const parts = raw
+    .split('+')
+    .map((part) => normalizeKeyToken(part))
+    .filter((part) => !!part);
+
+  const hasCtrl = parts.includes('ctrl');
+  const hasAlt = parts.includes('alt');
+  const hasShift = parts.includes('shift');
+  const key = parts.find((part) => part !== 'ctrl' && part !== 'alt' && part !== 'shift') || '';
+
+  const ordered: string[] = [];
+  if (hasCtrl) ordered.push('ctrl');
+  if (hasAlt) ordered.push('alt');
+  if (hasShift) ordered.push('shift');
+  if (key) ordered.push(key);
+  return ordered.join('+');
+};
+
+const eventToHotkeyString = (e: KeyboardEvent): string | null => {
+  const key = normalizeKeyToken(e.key);
+  if (!key || key === 'ctrl' || key === 'alt' || key === 'shift') return null;
+
+  const parts: string[] = [];
+  if (e.ctrlKey || e.metaKey) parts.push('ctrl');
+  if (e.altKey) parts.push('alt');
+  if (e.shiftKey) parts.push('shift');
+  parts.push(key);
+  return parts.join('+');
+};
+
+const displayHotkey = (hotkey: string): string => {
+  return hotkey
+    .split('+')
+    .map((part) => {
+      if (part === 'ctrl') return 'Ctrl';
+      if (part === 'alt') return 'Alt';
+      if (part === 'shift') return 'Shift';
+      if (part === 'space') return 'Space';
+      return part.length === 1 ? part.toUpperCase() : part.toUpperCase();
+    })
+    .join('+');
+};
+
+const startHotkeyCapture = () => {
+  isCapturingHotkey.value = true;
+  pendingHotkey.value = '';
+  addLog('[快捷键] 开始录制：请按目标组合键，然后按 Enter 确认');
+};
+
 const handleGlobalKeydown = (e: KeyboardEvent) => {
-  const hotkey = startBuildHotkey.value?.trim().toLowerCase();
-  if (!hotkey) return;
+  if (isCapturingHotkey.value) {
+    e.preventDefault();
+    e.stopPropagation();
 
-  const parts = hotkey.replace(/ /g, '').split('+');
-  const needsCtrl = parts.includes('ctrl');
-  const needsAlt = parts.includes('alt');
-  const needsShift = parts.includes('shift');
-  const key = parts[parts.length - 1];
+    if (e.key === 'Enter') {
+      if (!pendingHotkey.value) {
+        addLog('[快捷键] 请先按下一个快捷键组合，再按 Enter 确认');
+        return;
+      }
+      startBuildHotkey.value = displayHotkey(pendingHotkey.value);
+      isCapturingHotkey.value = false;
+      addLog(`[快捷键] 已设置为 ${startBuildHotkey.value}`);
+      return;
+    }
 
-  const isCtrl = e.ctrlKey || e.metaKey;
-  const isAlt = e.altKey;
-  const isShift = e.shiftKey;
+    if (e.key === 'Escape') {
+      isCapturingHotkey.value = false;
+      pendingHotkey.value = '';
+      addLog('[快捷键] 已取消录制');
+      return;
+    }
 
-  if (
-    isCtrl === needsCtrl &&
-    isAlt === needsAlt &&
-    isShift === needsShift &&
-    e.key.toLowerCase() === key
-  ) {
+    const pressedHotkey = eventToHotkeyString(e);
+    if (pressedHotkey) {
+      pendingHotkey.value = pressedHotkey;
+    }
+    return;
+  }
+
+  const targetHotkey = normalizeHotkeyString(startBuildHotkey.value || '');
+  if (!targetHotkey) return;
+
+  const pressedHotkey = eventToHotkeyString(e);
+  if (pressedHotkey && pressedHotkey === targetHotkey) {
     e.preventDefault();
     if (busy.value) {
       stopAutoBuild();
