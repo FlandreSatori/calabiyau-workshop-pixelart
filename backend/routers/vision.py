@@ -86,12 +86,23 @@ def analyze_green(req: AnalyzeRequest, vision: Any = Depends(get_vision)):
     frame = vision.capture_roi()
     res = vision._analyze_green_markers(frame)
     if res:
+        markers = [
+            {
+                "x": float(m.x),
+                "y": float(m.y),
+                "radius": float(m.radius),
+                "arc_ratio": float(m.arc_ratio),
+                "green_ratio": float(m.green_ratio),
+            }
+            for m in res.markers
+        ]
         return {
             "status": "success", "has_target": True, 
             "offset_x": res.center_offset_x, "offset_y": res.center_offset_y, 
-            "horizontal_error": res.horizontal_error, "confidence": res.confidence
+            "horizontal_error": res.horizontal_error, "confidence": res.confidence,
+            "markers": markers,
         }
-    return {"status": "fail", "has_target": False}
+    return {"status": "fail", "has_target": False, "markers": []}
 
 # @router.post("/analyze-white")
 # def analyze_white(req: AnalyzeRequest, vision: Any = Depends(get_vision)):
@@ -114,6 +125,16 @@ def detect_alignment(req: AnalyzeRequest, vision: Any = Depends(get_vision)):
     vision.center = req.roi_size / 2.0
     
     res = vision.detect_alignment()
+    markers = [
+        {
+            "x": float(m.x),
+            "y": float(m.y),
+            "radius": float(m.radius),
+            "arc_ratio": float(m.arc_ratio),
+            "green_ratio": float(m.green_ratio),
+        }
+        for m in res.markers
+    ]
     return {
         "status": "success" if res.has_target else "fail",
         "has_target": res.has_target,
@@ -121,7 +142,8 @@ def detect_alignment(req: AnalyzeRequest, vision: Any = Depends(get_vision)):
         "offset_y": res.center_offset_y,
         "horizontal_error": res.horizontal_error,
         "confidence": res.confidence,
-        "source": res.source
+        "source": res.source,
+        "markers": markers,
     }
 
 

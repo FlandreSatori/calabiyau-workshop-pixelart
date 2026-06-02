@@ -199,6 +199,9 @@
                 <div class="debug-actions">
                   <el-button :disabled="busy" type="primary" @click="testClick">测试-鼠标左击</el-button>
                   <el-button :disabled="busy" type="success" @click="testMove">测试-角色移动</el-button>
+                  <el-button :disabled="busy" :type="isMoveRecognitionRunning ? 'danger' : 'info'" @click="testMoveRecognition">
+                    {{ isMoveRecognitionRunning ? '停止-识别移动' : '测试-识别移动' }}
+                  </el-button>
                   <el-button :disabled="busy" type="warning" @click="testVision">测试-方块中心</el-button>
                   <el-button :disabled="busy" type="danger" @click="testGetColor">测试-取色</el-button>
                 </div>
@@ -344,6 +347,7 @@ import axios, { AxiosError } from 'axios';
 import { ElMessage, UploadFile, ElMessageBox } from 'element-plus';
 
 type WindowInfo = { hwnd: number; pid: number; exe_name: string; title: string; is_foreground: boolean; };
+type VisionMarker = { x: number; y: number; radius: number; arc_ratio: number; green_ratio: number; };
 
 const API_BASE = 'http://127.0.0.1:8000/api';
 const isCollapse = ref(false);
@@ -358,6 +362,13 @@ const autoActivateWindow = ref<boolean>(false);
 const busy = ref<boolean>(false);
 const shouldStop = ref<boolean>(false);
 const debugMode = ref(false);
+const isMoveRecognitionRunning = ref(false);
+const moveRecognitionDirection = ref<'d' | 'a' | 'space' | 'alt'>('d');
+let moveRecognitionTimer: number | undefined;
+let moveRecognitionPreviousMarkers: VisionMarker[] | null = null;
+let moveRecognitionLastSignature = '';
+let moveRecognitionMergeCount = 0;
+let moveRecognitionMissingFrames = 0;
 
 // Baseline-based view adjust
 const baselineGreenDistance = ref<number | null>(null);
@@ -713,6 +724,74 @@ const addLog = (msg: string) => {
   logs.value.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
   if (!debugMode.value && logs.value.length > 200) logs.value.shift();
   scrollLogsToLatest();
+};
+
+const addMergedLog = (signature: string, msg: string) => {
+  if (signature && signature === moveRecognitionLastSignature && logs.value.length > 0) {
+    moveRecognitionMergeCount += 1;
+    const idx = logs.value.length - 1;
+    logs.value[idx] = logs.value[idx].replace(/ \(x\d+\)$/, '') + ` (x${moveRecognitionMergeCount})`;
+    scrollLogsToLatest();
+    return;
+  }
+
+  moveRecognitionLastSignature = signature;
+  moveRecognitionMergeCount = 1;
+  addLog(msg);
+};
+
+const matchMarkers = (reference: VisionMarker[], current: VisionMarker[]) => {
+  if (reference.length !== 4 || current.length !== 4) return [] as Array<{ ref: VisionMarker; cur: VisionMarker }>;
+  const remaining = new Set([0, 1, 2, 3]);
+  const pairs: Array<{ ref: VisionMarker; cur: VisionMarker }> = [];
+
+  for (const ref of reference) {
+    let bestIdx: number | null = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const idx of Array.from(remaining)) {
+      const cur = current[idx];
+      const dist = Math.hypot(cur.x - ref.x, cur.y - ref.y);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = idx;
+      }
+    }
+    if (bestIdx === null) return [];
+    remaining.delete(bestIdx);
+    pairs.push({ ref, cur: current[bestIdx] });
+  }
+  return pairs;
+};
+
+const evaluateMarkerJump = (reference: VisionMarker[], current: VisionMarker[], direction: string) => {
+  const pairs = matchMarkers(reference, current);
+  if (pairs.length !== 4) {
+    return { moved: false, gap: 0, deltas: [] as number[], rawLines: [] as string[] };
+  }
+
+  const isHorizontal = ['a', 'd', 'left', 'right'].includes(direction.toLowerCase());
+  const deltas: number[] = [];
+  const rawLines: string[] = [];
+
+  for (let i = 0; i < pairs.length; i++) {
+    const p = pairs[i];
+    const axisDelta = isHorizontal ? p.cur.x - p.ref.x : p.cur.y - p.ref.y;
+    deltas.push(axisDelta);
+    rawLines.push(`#${i + 1} res=${axisDelta.toFixed(1)}`);
+  }
+
+  const sortedDeltas = [...deltas].sort((a, b) => a - b);
+  const gap = sortedDeltas.reduce((a, b) => a + b, 0) / 4.0; // now used as mean delta instead of visual gap
+
+  let moved = false;
+  const d = direction.toLowerCase();
+  
+  if ((d === 'd' || d === 'right') && gap > 15.0) moved = true;
+  else if ((d === 'a' || d === 'left') && gap < -15.0) moved = true;
+  else if ((d === 'space' || d === 'up') && gap < -15.0) moved = true;
+  else if ((d === 'alt' || d === 'down') && gap > 15.0) moved = true;
+
+  return { moved, gap, deltas: sortedDeltas, rawLines };
 };
 
 const addBackendLog = (msg: string) => {
@@ -1449,6 +1528,91 @@ const testMove = async () => {
     await axios.post(`${API_BASE}/macro/move-to-next-block`, { direction: 'd', timeout: 5.0, ...getTargetPayload() });
   } catch (e: any) { handleApiError(e); } finally { busy.value = false; }
 };
+
+const stopMoveRecognitionTest = () => {
+  if (moveRecognitionTimer) {
+    window.clearInterval(moveRecognitionTimer);
+    moveRecognitionTimer = undefined;
+  }
+  isMoveRecognitionRunning.value = false;
+  moveRecognitionPreviousMarkers = null;
+  moveRecognitionLastSignature = '';
+  moveRecognitionMergeCount = 0;
+  moveRecognitionMissingFrames = 0;
+};
+
+const testMoveRecognition = async () => {
+  if (isMoveRecognitionRunning.value) {
+    stopMoveRecognitionTest();
+    addLog('[移动识别测试] 已停止');
+    return;
+  }
+
+  try {
+    await prepareWindowFocus();
+    isMoveRecognitionRunning.value = true;
+    moveRecognitionPreviousMarkers = null;
+    moveRecognitionLastSignature = '';
+    moveRecognitionMergeCount = 0;
+    moveRecognitionMissingFrames = 0;
+    addLog(`[移动识别测试] 已启动，方向=${moveRecognitionDirection.value}，轮询间隔=120ms`);
+
+    moveRecognitionTimer = window.setInterval(async () => {
+      if (!isMoveRecognitionRunning.value) return;
+      try {
+        const res = await axios.post(`${API_BASE}/vision/detect-alignment`, { roi_size: 315 });
+        const hasTarget = !!res.data?.has_target;
+        const markers = ((res.data?.markers || []) as VisionMarker[]).map((m) => ({
+          x: Number(m.x),
+          y: Number(m.y),
+          radius: Number(m.radius),
+          arc_ratio: Number(m.arc_ratio),
+          green_ratio: Number(m.green_ratio),
+        }));
+
+        if (!hasTarget || markers.length !== 4) {
+          moveRecognitionMissingFrames += 1;
+          const signature = `no-target-${markers.length}-${Math.min(moveRecognitionMissingFrames, 8)}`;
+          addMergedLog(signature, `[移动识别测试] 未满足四圆点条件 has_target=${hasTarget} markers=${markers.length} missing=${moveRecognitionMissingFrames}`);
+          if (moveRecognitionMissingFrames >= 8) {
+            moveRecognitionPreviousMarkers = null;
+          }
+          return;
+        }
+
+        moveRecognitionMissingFrames = 0;
+
+        if (!moveRecognitionPreviousMarkers) {
+          moveRecognitionPreviousMarkers = markers;
+          const markerMsg = markers
+            .map((m, i) => `#${i + 1}(x=${m.x.toFixed(1)},y=${m.y.toFixed(1)},r=${m.radius.toFixed(2)},arc=${m.arc_ratio.toFixed(2)},g=${m.green_ratio.toFixed(2)})`)
+            .join(' | ');
+          addMergedLog(`init-${markers.map((m) => `${Math.round(m.x)}:${Math.round(m.y)}`).join(',')}`, `[移动识别测试] 已建立基准帧 ${markerMsg}`);
+          return;
+        }
+
+        const evalRes = evaluateMarkerJump(moveRecognitionPreviousMarkers, markers, moveRecognitionDirection.value);
+        const markerDetail = evalRes.rawLines.join(' | ');
+        const sortedDeltasStr = evalRes.deltas.map(d => d.toFixed(1)).join(',');
+        const signature = `m=${evalRes.moved ? 1 : 0};gap=${evalRes.gap.toFixed(1)}`;
+
+        addMergedLog(
+          signature,
+          `[移动识别测试] jump=${evalRes.moved} gap=${evalRes.gap.toFixed(2)} sorted_deltas=[${sortedDeltasStr}] | ${markerDetail}`,
+        );
+
+        // 总是把前一帧作为基准帧
+        moveRecognitionPreviousMarkers = markers;
+      } catch (e: any) {
+        addMergedLog('move-recognition-error', `[移动识别测试] 请求失败: ${formatAxiosError(e)}`);
+      }
+    }, 120);
+  } catch (e: any) {
+    stopMoveRecognitionTest();
+    handleApiError(e);
+  }
+};
+
 const testVision = async () => {
   try {
     await axios.post(`${API_BASE}/vision/analyze-green`, { roi_size: 315 });
@@ -1585,6 +1749,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (foregroundTimer) window.clearInterval(foregroundTimer);
+  stopMoveRecognitionTest();
   if (ws) ws.close();
   window.removeEventListener('keydown', handleGlobalKeydown);
 });

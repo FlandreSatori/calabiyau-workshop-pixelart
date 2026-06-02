@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import combinations
 from typing import Optional
 
 import cv2
@@ -11,6 +12,15 @@ from window_manager import WindowManager
 
 
 @dataclass
+class MarkerObservation:
+    x: float
+    y: float
+    radius: float
+    arc_ratio: float
+    green_ratio: float
+
+
+@dataclass
 class AlignmentResult:
     has_target: bool
     horizontal_error: float
@@ -18,10 +28,11 @@ class AlignmentResult:
     center_offset_y: float
     confidence: float
     source: str
+    markers: tuple[MarkerObservation, ...] = field(default_factory=tuple)
 
 
 class VisionCore:
-    def __init__(self, roi_size: int = 200, monitor_index: int = 1, exe_name: str = "Calabiyau-Win64-Shipping.exe"):
+    def __init__(self, roi_size: int = 850, monitor_index: int = 1, exe_name: str = "Calabiyau-Win64-Shipping.exe"):
         self.roi_size = roi_size
         self.monitor_index = monitor_index
         self.exe_name = exe_name
@@ -109,6 +120,7 @@ class VisionCore:
             center_offset_y=float(center[1] - self.center),
             confidence=confidence,
             source="white_ghost_diff",
+            markers=tuple(),
         )
 
     @staticmethod
@@ -126,16 +138,16 @@ class VisionCore:
             angle += 90.0
         return float(angle)
 
-    def _estimate_square_horizontal_error(self, points: list[tuple[float, float, float]]) -> Optional[float]:
+    def _estimate_square_horizontal_error(self, points: list[tuple[float, float]]) -> Optional[float]:
         """Estimate horizontal error from marker edges to avoid diagonal-angle bias."""
         if len(points) < 4:
             return None
 
         edge_candidates: list[tuple[float, float]] = []
         for i in range(len(points)):
-            x1, y1, _ = points[i]
+            x1, y1 = points[i]
             for j in range(i + 1, len(points)):
-                x2, y2, _ = points[j]
+                x2, y2 = points[j]
                 dx = float(x2 - x1)
                 dy = float(y2 - y1)
                 dist = float(np.hypot(dx, dy))
@@ -159,150 +171,97 @@ class VisionCore:
 
         return float(np.mean(inliers))
 
-    def _analyze_green_markers(self, frame: np.ndarray) -> Optional[AlignmentResult]:
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        
-        # 严格锁定 #00f700（荧光绿）附近的颜色，排除暗绿和灰绿
-        lower_green = np.array([50, 150, 150], dtype=np.uint8)
-        upper_green = np.array([70, 255, 255], dtype=np.uint8)
-        mask = cv2.inRange(hsv, lower_green, upper_green)
-        
-        # 闭运算连接断裂的圆弧
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    @staticmethod
+    def _marker_score(marker: MarkerObservation) -> float:
+        return float(max(0.0, marker.arc_ratio) * max(0.05, marker.green_ratio) * max(2.0, marker.radius))
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        points: list[tuple[float, float, float]] = []
+    def _build_marker_masks(self, frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < 300:  # 容忍 1/4 圆弧
-                continue
-                
-            pts = contour.reshape(-1, 2).astype(np.float32)
-            if len(pts) < 3:
-                continue
-
-            try:
-                # 代数圆拟合，找回被遮挡圆弧的真实圆心
-                x = pts[:, 0]
-                y = pts[:, 1]
-                z = x**2 + y**2
-                A = np.column_stack([x, y, np.ones_like(x)])
-                c, _, _, _ = np.linalg.lstsq(A, z, rcond=None)
-                
-                a = float(c[0] / 2.0)
-                b = float(c[1] / 2.0)
-                fitted_radius = float(np.sqrt(max(0, c[2] + a**2 + b**2)))
-                
-                # 过滤异常半径
-                if 20.0 < fitted_radius < 200.0:
-                    points.append((a, b, float(area)))
-            except Exception:
-                continue
-
-        # 【修改点】：至少要求 3 个点
-        if len(points) < 3:
-            return None
-
-        # 按面积取最大的前 4 个点
-        points.sort(key=lambda item: item[2], reverse=True)
-        points = points[:4]
-        
-        xs = np.array([p[0] for p in points], dtype=np.float32)
-        ys = np.array([p[1] for p in points], dtype=np.float32)
-        
-        # 【核心几何优化】：精准计算中心
-        if len(points) == 4:
-            # 4个点齐备，均值即为正中心
-            center_x = float(np.mean(xs))
-            center_y = float(np.mean(ys))
-        else:
-            # 只有3个点时，寻找距离最远的两个点（正方形的对角线）
-            max_dist = 0
-            diag_p1, diag_p2 = (0.0, 0.0), (0.0, 0.0)
-            for i in range(3):
-                for j in range(i + 1, 3):
-                    d = (xs[i] - xs[j])**2 + (ys[i] - ys[j])**2
-                    if d > max_dist:
-                        max_dist = d
-                        diag_p1 = (xs[i], ys[i])
-                        diag_p2 = (xs[j], ys[j])
-            # 对角线的中点就是绝对的方块正中心，拒绝偏移！
-            center_x = float((diag_p1[0] + diag_p2[0]) / 2.0)
-            center_y = float((diag_p1[1] + diag_p2[1]) / 2.0)
-
-        # 估算倾斜角
-        if len(points) == 4:
-            estimated_error = self._estimate_square_horizontal_error(points)
-            if estimated_error is not None:
-                horizontal_error = estimated_error
-            else:
-                left_index = int(np.argmin(xs))
-                right_index = int(np.argmax(xs))
-                dx = float(xs[right_index] - xs[left_index])
-                dy = float(ys[right_index] - ys[left_index])
-                horizontal_error = float(np.degrees(np.arctan2(dy, dx if abs(dx) > 1e-6 else 1e-6)))
-        else:
-            # 3个点时，直接找最左和最右的点建立水平基线
-            left_index = int(np.argmin(xs))
-            right_index = int(np.argmax(xs))
-            dx = float(xs[right_index] - xs[left_index])
-            dy = float(ys[right_index] - ys[left_index])
-            horizontal_error = float(np.degrees(np.arctan2(dy, dx if abs(dx) > 1e-6 else 1e-6)))
-
-        # 置信度计算
-        confidence = min(1.0, len(points) / 4.0)
-
-        return AlignmentResult(
-            has_target=True,
-            horizontal_error=horizontal_error,
-            center_offset_x=center_x - self.center,
-            center_offset_y=center_y - self.center,
-            confidence=confidence,
-            source="green_markers",
+        # 绿色圆点: RGB (0,245~255,0~30)
+        green_mask = cv2.inRange(
+            rgb,
+            np.array([0, 245, 0], dtype=np.uint8),
+            np.array([30, 255, 30], dtype=np.uint8),
+        )
+        # 白色虚影遮挡叠加色: RGB (165~175,195~205,165~175)
+        ghost_mask = cv2.inRange(
+            rgb,
+            np.array([165, 195, 165], dtype=np.uint8),
+            np.array([175, 205, 175], dtype=np.uint8),
         )
 
-    def measure_green_marker_edge_length(self, frame: np.ndarray) -> Optional[float]:
-        """Measure representative edge length between green markers."""
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        
-        # 保持一致的纯绿色阈值
-        lower_green = np.array([50, 150, 150], dtype=np.uint8)
-        upper_green = np.array([70, 255, 255], dtype=np.uint8)
-        mask = cv2.inRange(hsv, lower_green, upper_green)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        combined = cv2.bitwise_or(green_mask, ghost_mask)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=1)
+        combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel, iterations=1)
+        return combined, green_mask, ghost_mask
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        points: list[tuple[float, float]] = []
-        
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < 300:
-                continue
-                
-            pts = contour.reshape(-1, 2).astype(np.float32)
-            if len(pts) < 3:
-                continue
-
-            try:
-                x = pts[:, 0]
-                y = pts[:, 1]
-                z = x**2 + y**2
-                A = np.column_stack([x, y, np.ones_like(x)])
-                c, _, _, _ = np.linalg.lstsq(A, z, rcond=None)
-                
-                a = float(c[0] / 2.0)
-                b = float(c[1] / 2.0)
-                fitted_radius = float(np.sqrt(max(0, c[2] + a**2 + b**2)))
-                
-                if 2.0 < fitted_radius < 200.0:
-                    points.append((a, b))
-            except Exception:
-                continue
-
-        if len(points) < 3:
+    def _fit_marker_from_contour(self, contour: np.ndarray, green_mask: np.ndarray) -> Optional[MarkerObservation]:
+        area = float(cv2.contourArea(contour))
+        if area < 35.0:
             return None
 
+        (cx, cy), radius = cv2.minEnclosingCircle(contour)
+        radius = float(radius)
+        if radius < 4.0 or radius > float(self.roi_size) * 0.6:
+            return None
+
+        circle_area = float(np.pi * radius * radius)
+        if circle_area <= 1e-6:
+            return None
+
+        # quarter/half/3-quarter/full circle are all allowed
+        fill_ratio = area / circle_area
+        if fill_ratio < 0.10 or fill_ratio > 1.25:
+            return None
+
+        pts = contour.reshape(-1, 2).astype(np.float32)
+        if pts.shape[0] < 5:
+            return None
+
+        d = np.hypot(pts[:, 0] - float(cx), pts[:, 1] - float(cy))
+        spread = float(np.std(d) / max(1e-6, float(np.mean(d))))
+        if spread > 0.40:
+            return None
+
+        contour_mask = np.zeros(green_mask.shape, dtype=np.uint8)
+        cv2.drawContours(contour_mask, [contour], -1, 255, thickness=-1)
+        total_pixels = int(cv2.countNonZero(contour_mask))
+        if total_pixels <= 0:
+            return None
+
+        green_pixels = int(cv2.countNonZero(cv2.bitwise_and(green_mask, contour_mask)))
+        green_ratio = float(green_pixels) / float(total_pixels)
+
+        return MarkerObservation(
+            x=float(cx),
+            y=float(cy),
+            radius=radius,
+            arc_ratio=float(np.clip(fill_ratio, 0.0, 1.0)),
+            green_ratio=green_ratio,
+        )
+
+    def _dedupe_markers(self, markers: list[MarkerObservation]) -> list[MarkerObservation]:
+        if not markers:
+            return []
+
+        sorted_markers = sorted(markers, key=self._marker_score, reverse=True)
+        kept: list[MarkerObservation] = []
+        for marker in sorted_markers:
+            duplicate = False
+            for existing in kept:
+                distance = float(np.hypot(marker.x - existing.x, marker.y - existing.y))
+                merge_dist = max(2.5, min(marker.radius, existing.radius) * 0.7)
+                if distance <= merge_dist:
+                    duplicate = True
+                    break
+            if not duplicate:
+                kept.append(marker)
+        return kept
+
+    def _square_shape_score(self, markers: list[MarkerObservation]) -> float:
+        points = [(m.x, m.y) for m in markers]
         dists: list[float] = []
         for i in range(len(points)):
             x1, y1 = points[i]
@@ -310,17 +269,120 @@ class VisionCore:
                 x2, y2 = points[j]
                 dists.append(float(np.hypot(x2 - x1, y2 - y1)))
 
-        if not dists:
+        if len(dists) != 6:
+            return -1e9
+
+        dists.sort()
+        edges = np.array(dists[:4], dtype=np.float32)
+        diags = np.array(dists[4:], dtype=np.float32)
+        edge_mean = float(np.mean(edges))
+        diag_mean = float(np.mean(diags))
+        if edge_mean <= 1e-6 or diag_mean <= 1e-6:
+            return -1e9
+
+        ratio = diag_mean / edge_mean
+        if ratio < 1.20 or ratio > 1.80:
+            return -1e9
+
+        edge_cv = float(np.std(edges) / edge_mean)
+        diag_cv = float(np.std(diags) / diag_mean)
+        quality = float(np.mean([m.arc_ratio for m in markers]))
+        return quality - (edge_cv * 1.4 + diag_cv * 1.1 + abs(ratio - np.sqrt(2.0)) * 0.8)
+
+    def _select_best_four_markers(self, markers: list[MarkerObservation]) -> list[MarkerObservation]:
+        if len(markers) < 4:
+            return []
+        if len(markers) == 4:
+            return markers
+
+        best_score = -1e9
+        best_group: Optional[list[MarkerObservation]] = None
+        candidates = sorted(markers, key=self._marker_score, reverse=True)[:8]
+        for combo in combinations(candidates, 4):
+            group = list(combo)
+            score = self._square_shape_score(group)
+            if score > best_score:
+                best_score = score
+                best_group = group
+
+        return best_group if best_group is not None else []
+
+    def _extract_four_markers(self, frame: np.ndarray) -> list[MarkerObservation]:
+        combined_mask, green_mask, _ = self._build_marker_masks(frame)
+        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        candidates: list[MarkerObservation] = []
+        for contour in contours:
+            marker = self._fit_marker_from_contour(contour, green_mask)
+            if marker is not None:
+                candidates.append(marker)
+
+        if len(candidates) < 4:
+            return []
+
+        deduped = self._dedupe_markers(candidates)
+        if len(deduped) < 4:
+            return []
+
+        chosen = self._select_best_four_markers(deduped)
+        if len(chosen) != 4:
+            return []
+
+        return chosen
+
+    def _analyze_green_markers(self, frame: np.ndarray) -> Optional[AlignmentResult]:
+        markers = self._extract_four_markers(frame)
+        if len(markers) != 4:
+            return None
+
+        xs = np.array([m.x for m in markers], dtype=np.float32)
+        ys = np.array([m.y for m in markers], dtype=np.float32)
+        center_x = float(np.mean(xs))
+        center_y = float(np.mean(ys))
+
+        estimated_error = self._estimate_square_horizontal_error([(m.x, m.y) for m in markers])
+        if estimated_error is not None:
+            horizontal_error = estimated_error
+        else:
+            left_index = int(np.argmin(xs))
+            right_index = int(np.argmax(xs))
+            dx = float(xs[right_index] - xs[left_index])
+            dy = float(ys[right_index] - ys[left_index])
+            horizontal_error = float(np.degrees(np.arctan2(dy, dx if abs(dx) > 1e-6 else 1e-6)))
+
+        mean_arc = float(np.mean([m.arc_ratio for m in markers]))
+        mean_green = float(np.mean([m.green_ratio for m in markers]))
+        confidence = float(np.clip(0.55 * mean_arc + 0.45 * mean_green, 0.0, 1.0))
+
+        return AlignmentResult(
+            has_target=True,
+            horizontal_error=horizontal_error,
+            center_offset_x=center_x - self.center,
+            center_offset_y=center_y - self.center,
+            confidence=confidence,
+            source="green_markers_4pts",
+            markers=tuple(markers),
+        )
+
+    def measure_green_marker_edge_length(self, frame: np.ndarray) -> Optional[float]:
+        """Measure representative edge length between green markers."""
+        markers = self._extract_four_markers(frame)
+        if len(markers) != 4:
+            return None
+
+        points = [(m.x, m.y) for m in markers]
+        dists: list[float] = []
+        for i in range(len(points)):
+            x1, y1 = points[i]
+            for j in range(i + 1, len(points)):
+                x2, y2 = points[j]
+                dists.append(float(np.hypot(x2 - x1, y2 - y1)))
+
+        if len(dists) != 6:
             return None
 
         dists.sort()
-        # 对于 3 个点，会产生 3 条距离。前 2 条短的是边长，最长的那条是对角线。
-        # 取前两条边长求平均（或直接用最短的边长）
-        if len(points) == 3:
-            return float(np.mean(dists[:2]))
-            
-        # 4 个点时，照旧取前4短的距离求中位数
-        edge_sample = dists[:4] if len(dists) >= 4 else dists
+        edge_sample = dists[:4]
         return float(np.median(edge_sample))
 
     # def _analyze_white_preview(self, frame: np.ndarray) -> Optional[AlignmentResult]:

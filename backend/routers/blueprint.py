@@ -103,7 +103,6 @@ def plan_pipeline(req: PlanRequest):
     
     total_pipeline = []
     placed_so_far = set()
-    error_blocks = []
 
     rows_with_blocks = {}
     for (x, y) in target_blocks:
@@ -128,16 +127,6 @@ def plan_pipeline(req: PlanRequest):
         for col_idx, x in enumerate(x_range):
             y = step_y
             if (x, y) in target_blocks:
-                # Air validation: solid if in completed or placed_so_far
-                solid_neighbors = 0
-                for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-                    nb = (x + dx, y + dy)
-                    if nb in completed or nb in placed_so_far:
-                        solid_neighbors += 1
-                
-                if solid_neighbors >= 3:
-                    error_blocks.append({"x": x, "y": y, "type": "error"})
-                
                 placed_so_far.add((x, y))
                 total_pipeline.append({
                     "type": "place_and_dye",
@@ -181,15 +170,6 @@ def plan_pipeline(req: PlanRequest):
             while current_x > next_start_x:
                 total_pipeline.append({"type": "move", "direction": "a", "desc": "Align X (a)"})
                 current_x -= 1
-
-    if error_blocks:
-        raise HTTPException(
-            status_code=400, 
-            detail={
-                "detail": f"发现 {len(error_blocks)} 个方块由于缺少至少2个空气邻位而规划失败。它们已被标红。",
-                "error_blocks": error_blocks
-            }
-        )
 
     skipped_blocks = []
     for yy in range(ry0, ry1 + 1):
