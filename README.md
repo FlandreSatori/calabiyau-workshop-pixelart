@@ -1,27 +1,21 @@
-# 卡皮喵 --- 卡丘工坊自动像素画工具
+# 卡丘工坊自动像素画工具/猫画画
 
-*[ 译者注：Pixel = 皮 ]*
+#### 直接启动
 
----
-
-项目代码会尽力兼容不同版本的Python解释器
-
----
+前往release下载打包好的软件
 
 #### 从源码构建
 
-打开终端（CMD/PowerShell/ 终端），进入项目文件夹calabiyau-workshop-pixelart。
+打开终端（CMD/PowerShell/ 终端），进入项目文件夹calabiyau-workshop-pixelart
 
+**Windows**
 创建.venv 虚拟环境：
 
 ```bash
-# Windows用python，mac/linux用python3
 python -m venv .venv
 ```
 
 接着激活虚拟环境：
-
-**Windows**
 
 ```bash
 # CMD
@@ -34,10 +28,8 @@ python -m venv .venv
 ```
 
 **Mac / Linux**
-
-```bash
-# Bash
-source .venv/bin/activate
+```
+只有Windows有卡丘喵，散了喵
 ```
 
 若激活成功，终端前面会出现 `(.venv)` 标识。
