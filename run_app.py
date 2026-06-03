@@ -4,7 +4,7 @@ import os
 import time
 import socket
 import ctypes
-
+from typing import Optional
 
 def is_admin() -> bool:
     if sys.platform != "win32":
@@ -42,8 +42,19 @@ def get_app_base_dir() -> str:
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
 
-
+'''
+# str | None 是 Python3.10+ 新语法（联合类型）
 def find_existing_path(*candidates: str) -> str | None:
+    base_dir = get_app_base_dir()
+    for relative_path in candidates:
+        absolute_path = os.path.join(base_dir, relative_path)
+        if os.path.exists(absolute_path):
+            return absolute_path
+    return None
+'''
+
+# 兼容兼容低版本Python解释器
+def find_existing_path(*candidates: str) -> Optional[str]:
     base_dir = get_app_base_dir()
     for relative_path in candidates:
         absolute_path = os.path.join(base_dir, relative_path)

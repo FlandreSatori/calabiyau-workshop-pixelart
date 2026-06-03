@@ -1,44 +1,88 @@
-## 卡丘工坊自动像素画
+# 卡皮喵 --- 卡丘工坊自动像素画工具
 
+*[ 译者注：Pixel = 皮 ]*
 
+---
+
+项目代码会尽力兼容不同版本的Python解释器
+
+---
 
 #### 从源码构建
 
+打开终端（CMD/PowerShell/ 终端），进入项目文件夹calabiyau-workshop-pixelart。
+
+创建.venv 虚拟环境：
+
+```bash
+# Windows用python，mac/linux用python3
+python -m venv .venv
 ```
-pip install -r requirements_vision.txt
+
+接着激活虚拟环境：
+
+**Windows**
+
+```bash
+# CMD
+.venv\Scripts\activate.bat
+```
+
+```bash
+# PowerShell
+.venv\Scripts\Activate.ps1
+```
+
+**Mac / Linux**
+
+```bash
+# Bash
+source .venv/bin/activate
+```
+
+若激活成功，终端前面会出现 `(.venv)` 标识。
+
+示例：
+
+```bash
+PS D:\develop\calabiyau-workshop-pixelart> python -m venv .venv
+PS D:\develop\calabiyau-workshop-pixelart> .venv\Scripts\Activate.ps1
+(.venv) PS D:\develop\calabiyau-workshop-pixelart>
+```
+
+安装依赖 & 启动程序
+
+```bash
+# 安装依赖，使用国内源加速
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 启动程序
 python .\run_app.py
 ```
 
+安装前端本地依赖：
 
+在 `frontend` 目录下运行：
 
-#### 使用说明
+```bash
+npm install
+```
 
-1. 导入一张图像，选择需要的宽和高，生成蓝图
+这会安装 `package.json` 中定义的所有依赖（包括 `vue-tsc`、`vite` 等）。
 
-2. ~~按照软件提示（未实现）~~，将1号快捷栏设置为铁板，2号快捷栏设置为染色方块
+```bash
+npm run tauri build
+```
 
-3. 移动到画布（空白画布工坊代码 vuuwr9）的左下角，距离画布10格左右（绿色圆点半径在100-200之间，放置方块后刚好能不漏出缝隙为最佳），调整视角尽可能平视前方（有自动纠错，但不水平会增加失误率）
+---
 
-   ![](image1.png)
+#### 文档说明
 
-   ![](image2.png)
+文档参见`calabiyau-workshop-pixelart\docs`
 
-4. 确保染色面板键位是E，Space上升，Alt下降，WASD是前后左右
+你可以在`calabiyau-workshop-pixelart\docs\guide.md`找到使用说明
 
-5. 确保 调试 界面显示的目标窗口是卡拉彼丘，如果不是，点击“一键选中卡拉彼丘”
+---
 
-6. 在 任务 界面点击开始搭建，然后在3秒内手动切换到卡拉彼丘界面
+#### 开发日志与路线计划
 
-
-
-
-
-#### TODO:
-
-1. 蓝图生成优化：提取线稿（轮廓）功能，更好的缩放/取色算法
-2. 方块匹配：录入更多的方块底色，构建一个自由选择2-8号快捷栏放什么方块的菜单界面
-3. 撞墙识别
-4. UI校准
-5. 自定义蓝图建造顺序：当前是S形建造，即最底一行向右，然后第二行向左等等，加入按区块建造以方便检查
-6. 用户配置数据，蓝图数据和任务中断数据需要持久化到本地
-7. 长时间运行时的内存泄漏问题
+参见`calabiyau-workshop-pixelart\devlog`
