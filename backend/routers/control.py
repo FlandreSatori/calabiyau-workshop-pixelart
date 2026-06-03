@@ -5,12 +5,13 @@ from backend.dependencies import get_dd
 from window_manager import WindowManager
 import time
 import win32gui
+from typing import Optional
 
 router = APIRouter()
 
 class BaseGameRequest(BaseModel):
     exe_name: str = "Calabiyau-Win64-Shipping.exe"
-    window_hwnd: int | None = None
+    window_hwnd: Optional[int] = None
     focus_settle_delay: float = 0.05
 
 class MoveRequest(BaseGameRequest):
@@ -23,7 +24,7 @@ class ClickRequest(BaseGameRequest):
 class KeyPressRequest(BaseGameRequest):
     key: str
 
-def ensure_game_active(exe_name: str, window_hwnd: int | None = None, settle_delay: float = 0.05):
+def ensure_game_active(exe_name: str, window_hwnd: Optional[int] = None, settle_delay: float = 0.05):
     # If a hwnd is provided, verify it exists and is the current foreground window.
     if window_hwnd is not None:
         try:

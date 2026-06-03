@@ -2,6 +2,7 @@ import win32gui
 import win32process
 import win32con
 import psutil
+from typing import Optional, Tuple
 
 class WindowManager:
     @staticmethod
@@ -46,7 +47,7 @@ class WindowManager:
         return windows
 
     @staticmethod
-    def get_hwnd(exe_name: str) -> int | None:
+    def get_hwnd(exe_name: str) -> Optional[int]:
         target_pid = None
         for proc in psutil.process_iter(['pid', 'name']):
             if proc.info['name'] and proc.info['name'].lower() == exe_name.lower():
@@ -108,7 +109,7 @@ class WindowManager:
             return False
 
     @staticmethod
-    def get_window_rect(exe_name: str) -> tuple[int, int, int, int] | None:
+    def get_window_rect(exe_name: str) -> Optional[Tuple[int, int, int, int]]:
         hwnd = WindowManager.get_hwnd(exe_name)
         if not hwnd:
             return None

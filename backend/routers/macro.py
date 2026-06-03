@@ -2,7 +2,7 @@ import time
 import traceback
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from typing import Any
+from typing import Any, Optional
 from backend.dependencies import get_dd, get_vision
 from ui_interaction import UIInteraction
 from movement_controller import MovementController
@@ -13,7 +13,7 @@ router = APIRouter()
 
 class BaseGameRequest(BaseModel):
     exe_name: str = "Calabiyau-Win64-Shipping.exe"
-    window_hwnd: int | None = None
+    window_hwnd: Optional[int]= None
     focus_settle_delay: float = Field(0.05, ge=0.0, le=5.0)
     place_key_delay: float = Field(0.3, ge=0.0, le=5.0)
     place_click_delay: float = Field(0.3, ge=0.0, le=5.0)
@@ -32,8 +32,8 @@ class DyeRequest(BaseGameRequest):
     hex_color: str
     color_input_x: int = 2157
     color_input_y: int = 930
-    confirm_button_x: int | None = None
-    confirm_button_y: int | None = None
+    confirm_button_x: Optional[int]= None
+    confirm_button_y: Optional[int]= None
     repaste_only: bool = False
 
 class DyeConfirmRequest(BaseGameRequest):
@@ -43,18 +43,18 @@ class DyeConfirmRequest(BaseGameRequest):
 class MoveCharacterRequest(BaseGameRequest):
     direction: str
     timeout: float = 20.0
-    dye_recovery: dict | None = None
+    dye_recovery: Optional[dict]= None
 
 class MoveKeepRequest(BaseGameRequest):
     direction: str
     timeout: float = 5.0
-    baseline_distance: float | None = None
+    baseline_distance: Optional[float]= None
     threshold_ratio: float = Field(0.10, ge=0.0, le=1.0)
 
 class ActionRequest(BaseGameRequest):
     pass
 
-def ensure_game_active(exe_name: str, window_hwnd: int | None = None, settle_delay: float = 0.05):
+def ensure_game_active(exe_name: str, window_hwnd: Optional[int]= None, settle_delay: float = 0.05):
     # Validate hwnd existence (if provided) and require it to be the current foreground window.
     if window_hwnd is not None:
         try:

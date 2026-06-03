@@ -44,7 +44,7 @@ def get_app_base_dir() -> str:
 
 '''
 # str | None 是 Python3.10+ 新语法（联合类型）
-def find_existing_path(*candidates: str) -> str | None:
+def find_existing_path(*candidates: str) -> Optional[str]:
     base_dir = get_app_base_dir()
     for relative_path in candidates:
         absolute_path = os.path.join(base_dir, relative_path)
@@ -103,9 +103,9 @@ def start_backend(base_dir: str) -> subprocess.Popen:
     return subprocess.Popen(
         command, 
         cwd=base_dir, 
-        creationflags=creation_flags,
-        stdout=subprocess.DEVNULL,  # 重定向日志输出到 null
-        stderr=subprocess.DEVNULL
+        creationflags=creation_flags
+        # stdout=subprocess.DEVNULL,  # 重定向日志输出到 null
+        # stderr=subprocess.DEVNULL
     )
 
 

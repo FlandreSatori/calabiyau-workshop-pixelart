@@ -4,6 +4,7 @@ from statistics import mean, pstdev
 from vision_core import MarkerObservation, VisionCore
 import win32gui
 
+from typing import Optional
 
 class MovementController:
     def __init__(self, dd, vision: VisionCore):
@@ -12,7 +13,7 @@ class MovementController:
         self.move_duration_history: list[float] = []
         self.move_jump_history: list[float] = []
 
-    def _is_target_window_valid(self, target_hwnd: int | None) -> bool:
+    def _is_target_window_valid(self, target_hwnd: Optional[int]) -> bool:
         if target_hwnd is None:
             return True
         try:
@@ -98,7 +99,7 @@ class MovementController:
         self.move_duration_history = []
         self.move_jump_history = []
 
-    def move_to_next_block(self, direction: str, timeout: float = 20.0, target_hwnd: int | None = None, dye_args: dict | None = None, sample_rate: float = 100.0) -> bool:
+    def move_to_next_block(self, direction: str, timeout: float = 20.0, target_hwnd: Optional[int] = None, dye_args: Optional[dict] = None, sample_rate: float = 100.0) -> bool:
         deadline = time.time() + timeout
 
         # 必须先拿到4个圆点（绿+灰），否则尝试切回1号位恢复
@@ -167,7 +168,7 @@ class MovementController:
         finally:
             self.dd.key_up(direction)
 
-    def move_keep(self, direction: str, timeout: float = 5.0, target_hwnd: int | None = None, sample_rate: float = 100.0, baseline_distance: float | None = None, threshold_ratio: float = 0.1) -> bool:
+    def move_keep(self, direction: str, timeout: float = 5.0, target_hwnd: Optional[int] = None, sample_rate: float = 100.0, baseline_distance: Optional[float] = None, threshold_ratio: float = 0.1) -> bool:
         """Move while monitoring green marker pairwise distance, stop when distance deviates
         from baseline by threshold_ratio (e.g. 0.1 for 10%). Returns True when deviation observed.
         If baseline_distance is None, attempt to measure it from current frame.

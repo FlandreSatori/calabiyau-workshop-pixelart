@@ -50,18 +50,16 @@ PS D:\develop\calabiyau-workshop-pixelart> .venv\Scripts\Activate.ps1
 (.venv) PS D:\develop\calabiyau-workshop-pixelart>
 ```
 
-安装依赖 & 启动程序
+安装依赖
 
 ```bash
-# 安装依赖，使用国内源加速
+# 使用国内源加速
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-# 启动程序
-python .\run_app.py
 ```
 
-安装前端本地依赖：
+**前端准备**
 
-在 `frontend` 目录下运行：
+安装前端本地依赖，在 `frontend` 目录下运行：
 
 ```bash
 npm install
@@ -72,6 +70,44 @@ npm install
 ```bash
 npm run tauri build
 ```
+
+| 文件          | 路径                                                                          |
+| ----------- | --------------------------------------------------------------------------- |
+| **MSI 安装包** | `frontend\src-tauri\target\release\bundle\msi\frontend_0.1.0_x64_en-US.msi` |
+| **前端可执行文件** | `frontend\src-tauri\target\release\frontend.exe`                            |
+
+**后端（开发模式）**
+
+```bash
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+**后端（发布模式，打包后端为 exe）**
+
+```bash
+pyinstaller --onefile backend/main.py -n backend
+copy "dist\backend.exe" "backend.exe"
+```
+
+**启动程序**
+
+检查根目录下是否已经放置frontend.exe和backend.exe，如果有则启动：
+
+```bash
+python .\run_app.py
+```
+
+运行示例：
+
+```bash
+PS D:\develop\calabiyau-workshop-pixelart> python run_app.py
+Starting packaged backend: D:\develop\calabiyau-workshop-pixelart\backend.exe
+⏳ 后端仍在启动中，正在等待端口 8000...
+🎉 检测到端口 8000 已成功开放！
+Starting packaged frontend: D:\develop\calabiyau-workshop-pixelart\frontend.exe
+```
+
+至此，软件已经开始运行！
 
 ---
 
