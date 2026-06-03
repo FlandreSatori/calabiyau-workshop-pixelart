@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 from collections import defaultdict
-from typing import Sequence
+from typing import Sequence, Optional
 
 from blueprint_model import Blueprint
 from build_config import BuildConfig
@@ -119,12 +119,12 @@ class BuildFSM:
             )
         )
 
-    def _current_planned_block(self) -> PlannedBlock | None:
+    def _current_planned_block(self) -> Optional[PlannedBlock]:
         if self.current_index < 0 or self.current_index >= len(self.plan):
             return None
         return self.plan[self.current_index]
 
-    def _next_planned_block(self) -> PlannedBlock | None:
+    def _next_planned_block(self) -> Optional[PlannedBlock]:
         next_index = self.current_index + 1
         if next_index < 0 or next_index >= len(self.plan):
             return None

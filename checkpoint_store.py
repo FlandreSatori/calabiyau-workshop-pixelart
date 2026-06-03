@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 import json
 
 
@@ -18,7 +18,7 @@ class CheckpointStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
 
-    def load(self) -> Checkpoint | None:
+    def load(self) -> Optional[Checkpoint]:
         if not self.path.exists():
             return None
         data: dict[str, Any] = json.loads(self.path.read_text(encoding="utf-8"))

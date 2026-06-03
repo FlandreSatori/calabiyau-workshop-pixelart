@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from typing import Optional
 from contextvars import ContextVar, Token
 
 _request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
@@ -13,5 +13,5 @@ def reset_request_id(token: Token) -> None:
     _request_id_var.reset(token)
 
 
-def get_request_id() -> str | None:
+def get_request_id() -> Optional[str]:
     return _request_id_var.get()

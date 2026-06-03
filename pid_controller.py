@@ -1,3 +1,4 @@
+from typing import Optional
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ class PIDConfig:
 
 
 class PIDController:
-    def __init__(self, config: PIDConfig | None = None):
+    def __init__(self, config: Optional[PIDConfig]= None):
         self.config = config or PIDConfig()
         self._integral_x = 0.0
         self._integral_y = 0.0

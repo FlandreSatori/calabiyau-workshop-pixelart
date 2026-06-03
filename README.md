@@ -1,44 +1,116 @@
-## 卡丘工坊自动像素画
+# 卡丘工坊自动像素画工具/猫画画
 
+#### 直接启动
 
+前往release下载打包好的软件
 
 #### 从源码构建
 
+打开终端（CMD/PowerShell/ 终端），进入项目文件夹calabiyau-workshop-pixelart
+
+**Windows**
+创建.venv 虚拟环境：
+
+```bash
+python -m venv .venv
 ```
-pip install -r requirements_vision.txt
+
+接着激活虚拟环境：
+
+```bash
+# CMD
+.venv\Scripts\activate.bat
+```
+
+```bash
+# PowerShell
+.venv\Scripts\Activate.ps1
+```
+
+**Mac / Linux**
+```
+只有Windows有卡丘喵，散了喵
+```
+
+若激活成功，终端前面会出现 `(.venv)` 标识。
+
+示例：
+
+```bash
+PS D:\develop\calabiyau-workshop-pixelart> python -m venv .venv
+PS D:\develop\calabiyau-workshop-pixelart> .venv\Scripts\Activate.ps1
+(.venv) PS D:\develop\calabiyau-workshop-pixelart>
+```
+
+安装依赖
+
+```bash
+# 使用国内源加速
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+**前端准备**
+
+安装前端本地依赖，在 `frontend` 目录下运行：
+
+```bash
+npm install
+```
+
+这会安装 `package.json` 中定义的所有依赖（包括 `vue-tsc`、`vite` 等）。
+
+```bash
+npm run tauri build
+```
+
+| 文件          | 路径                                                                          |
+| ----------- | --------------------------------------------------------------------------- |
+| **MSI 安装包** | `frontend\src-tauri\target\release\bundle\msi\frontend_0.1.0_x64_en-US.msi` |
+| **前端可执行文件** | `frontend\src-tauri\target\release\frontend.exe`                            |
+
+**后端（开发模式）**
+
+```bash
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+**后端（发布模式，打包后端为 exe）**
+
+```bash
+pyinstaller --onefile backend/main.py -n backend
+copy "dist\backend.exe" "backend.exe"
+```
+
+**启动程序**
+
+检查根目录下是否已经放置frontend.exe和backend.exe，如果有则启动：
+
+```bash
 python .\run_app.py
 ```
 
+运行示例：
 
+```bash
+PS D:\develop\calabiyau-workshop-pixelart> python run_app.py
+Starting packaged backend: D:\develop\calabiyau-workshop-pixelart\backend.exe
+⏳ 后端仍在启动中，正在等待端口 8000...
+🎉 检测到端口 8000 已成功开放！
+Starting packaged frontend: D:\develop\calabiyau-workshop-pixelart\frontend.exe
+```
 
-#### 使用说明
+至此，软件已经开始运行！
 
-1. 导入一张图像，选择需要的宽和高，生成蓝图
+---
 
-2. ~~按照软件提示（未实现）~~，将1号快捷栏设置为铁板，2号快捷栏设置为染色方块
+#### 文档说明
 
-3. 移动到画布（空白画布工坊代码 vuuwr9）的左下角，距离画布10格左右（绿色圆点半径在100-200之间，放置方块后刚好能不漏出缝隙为最佳），调整视角尽可能平视前方（有自动纠错，但不水平会增加失误率）
+文档参见`calabiyau-workshop-pixelart\docs`
 
-   ![](image1.png)
+你可以在`calabiyau-workshop-pixelart\docs\guide.md`找到使用说明
 
-   ![](image2.png)
+---
 
-4. 确保染色面板键位是E，Space上升，Alt下降，WASD是前后左右
+#### 开发日志与路线计划
 
-5. 确保 调试 界面显示的目标窗口是卡拉彼丘，如果不是，点击“一键选中卡拉彼丘”
-
-6. 在 任务 界面点击开始搭建，然后在3秒内手动切换到卡拉彼丘界面
-
-
-
-
-
-#### TODO:
-
-1. 蓝图生成优化：提取线稿（轮廓）功能，更好的缩放/取色算法
-2. 方块匹配：录入更多的方块底色，构建一个自由选择2-8号快捷栏放什么方块的菜单界面
-3. 撞墙识别
-4. UI校准
-5. 自定义蓝图建造顺序：当前是S形建造，即最底一行向右，然后第二行向左等等，加入按区块建造以方便检查
-6. 用户配置数据，蓝图数据和任务中断数据需要持久化到本地
-7. 长时间运行时的内存泄漏问题
+参见`calabiyau-workshop-pixelart\devlog`
