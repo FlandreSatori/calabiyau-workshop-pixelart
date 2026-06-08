@@ -25,6 +25,10 @@
           <el-icon><span style="font-size: 16px;">🔧</span></el-icon>
           <template #title>调试</template>
         </el-menu-item>
+        <el-menu-item index="inventory">
+          <el-icon><span style="font-size: 16px;">🎒</span></el-icon>
+          <template #title>背包</template>
+        </el-menu-item>
         <el-menu-item index="about">
           <el-icon><span style="font-size: 16px;">ℹ️</span></el-icon>
           <template #title>关于</template>
@@ -137,6 +141,8 @@
               <el-tag size="small" type="success">待建造: {{ pendingRegionCount }}</el-tag>
               <el-tag size="small" type="warning">已完成: {{ completedRegionCount }}</el-tag>
               <el-tag size="small" type="danger">规划状态: {{ planDirty ? '已失效' : '已规划' }}</el-tag>
+              <el-tag size="small" type="success">精确染色: {{ planningExactCount }}</el-tag>
+              <el-tag size="small" type="warning">近似染色: {{ planningApproxCount }}</el-tag>
             </div>
           </div>
 
@@ -328,6 +334,123 @@
             </el-col>
           </el-row>
         </div>
+        <div v-show="activeTab === 'inventory'" class="panel-content inventory-panel">
+          <el-row :gutter="20">
+            <el-col :span="16">
+              <el-card shadow="never" class="settings-card">
+                <template #header>
+                  <div class="inventory-header">
+                    <span>背包</span>
+                    <div style="display: flex; gap: 8px;">
+                      <el-button size="small" type="primary" plain @click="addInventoryBlock">新增方块</el-button>
+                      <el-button size="small" type="success" plain @click="saveBlockLibraryNow">保存方块库</el-button>
+                      <el-button size="small" type="info" plain @click="reloadBlockLibraryNow">重载方块库</el-button>
+                    </div>
+                  </div>
+                </template>
+                <div
+                  class="backpack-grid"
+                  @dragover.prevent
+                  @drop="onDropToBackpack"
+                >
+                  <div
+                    v-for="block in backpackBlocks"
+                    :key="block.id"
+                    class="backpack-item"
+                    :class="{ selected: selectedBlockId === block.id }"
+                    draggable="true"
+                    @dragstart="onDragStartFromBackpack(block.id)"
+                    @click="handleBackpackItemClick(block.id)"
+                    @dblclick="assignBlockToHotbar(block.id, activeHotbarIndex)"
+                  >
+                    <div class="block-thumb" :style="blockThumbStyle(block)">
+                      <img v-if="block.image" :src="resolveBlockImageSrc(block.image)" class="block-thumb-img" />
+                    </div>
+                    <div class="block-name">{{ block.name }}</div>
+                  </div>
+                </div>
+              </el-card>
+
+              <el-card shadow="never" class="settings-card mt-3">
+                <template #header>
+                  <span>快捷栏（拖入背包方块，点击选择当前建造方块）</span>
+                </template>
+                <div class="hotbar-row">
+                  <div
+                    v-for="(slotBlockId, idx) in hotbarSlots"
+                    :key="`slot-${idx}`"
+                    class="hotbar-slot"
+                    :class="{ active: activeHotbarIndex === idx, fixed: idx === 0 }"
+                    @click="idx === 0 ? null : activeHotbarIndex = idx"
+                    @contextmenu.prevent="assignSelectedBlockToSlot(idx)"
+                    @dragover.prevent
+                    @drop="onDropToHotbar(idx)"
+                  >
+                    <div
+                      v-if="slotBlockId"
+                      class="slot-content"
+                      draggable="true"
+                      @dragstart="onDragStartFromHotbar(idx)"
+                    >
+                      <div class="slot-index">{{ idx + 1 }}</div>
+                      <div class="slot-thumb" :style="getBlockThumbStyleById(slotBlockId)">
+                        <img v-if="getBlockById(slotBlockId)?.image" :src="resolveBlockImageSrc(getBlockById(slotBlockId)?.image || '')" class="block-thumb-img" />
+                      </div>
+                      <div class="slot-name">{{ getBlockById(slotBlockId)?.name || '未命名' }}</div>
+                    </div>
+                    <div v-else class="slot-empty">{{ idx + 1 }}</div>
+                    <div v-if="idx === 0" class="slot-fixed-tip">固定铁板</div>
+                  </div>
+                </div>
+                <div class="setting-item mt-2" style="margin-bottom: 0;">
+                  <div class="label" style="width: 120px;">当前建造方块</div>
+                  <span>{{ activeBuildBlock?.name || '未设置' }}</span>
+                  <span v-if="activeBuildBlock" style="color: #64748b; font-size: 12px;">
+                    槽位 {{ activeHotbarIndex + 1 }} | Base {{ activeBuildBlock.baseColor }} | M {{ activeBuildBlock.mask.toFixed(2) }}
+                  </span>
+                  <el-button size="small" type="primary" plain @click="assignSelectedBlockToActiveSlot">放入当前槽位</el-button>
+                </div>
+                <div style="margin-top: 8px; color: #64748b; font-size: 12px;">
+                  提示：若拖拽不可用，可先选中背包方块，再右键快捷栏槽位进行填充。
+                </div>
+              </el-card>
+            </el-col>
+
+            <el-col :span="8">
+              <el-card shadow="never" class="settings-card">
+                <template #header>方块编辑</template>
+                <div v-if="selectedBlock" class="block-editor">
+                  <div class="setting-item">
+                    <div class="label">名称</div>
+                    <el-input v-model="selectedBlock.name" placeholder="方块名称" :disabled="selectedBlockIsIron" />
+                  </div>
+                  <div class="setting-item">
+                    <div class="label">图片</div>
+                    <el-input v-model="selectedBlock.image" placeholder="图片 URL（可留空）" :disabled="selectedBlockIsIron" />
+                  </div>
+                  <div class="setting-item">
+                    <div class="label">底色 Base</div>
+                    <el-color-picker v-model="selectedBlock.baseColor" show-alpha="false" :disabled="selectedBlockIsIron" />
+                    <el-input v-model="selectedBlock.baseColor" style="width: 120px;" :disabled="selectedBlockIsIron" />
+                  </div>
+                  <div class="setting-item">
+                    <div class="label">遮罩 M</div>
+                    <el-slider v-model="selectedBlock.mask" :min="0" :max="1" :step="0.01" style="width: 160px;" :disabled="selectedBlockIsIron" />
+                    <el-input-number v-model="selectedBlock.mask" :min="0" :max="1" :step="0.01" :precision="2" size="small" :disabled="selectedBlockIsIron" />
+                  </div>
+                  <div class="setting-item">
+                    <div class="label">遮罩计算</div>
+                    <el-button size="small" type="warning" plain @click="calculateMaskForSelectedBlock" :disabled="selectedBlockIsIron">计算 M（按 #FF0000 标定）</el-button>
+                  </div>
+                  <div class="setting-item" style="margin-bottom: 0;">
+                    <el-button type="danger" plain size="small" @click="removeInventoryBlock(selectedBlock.id)">删除方块</el-button>
+                  </div>
+                </div>
+                <div v-else class="empty-state">先在背包中选择一个方块</div>
+              </el-card>
+            </el-col>
+          </el-row>
+        </div>
         <!-- 关于面板 -->
         <div v-show="activeTab === 'about'" class="panel-content">
           <el-card shadow="never" class="settings-card">
@@ -348,8 +471,38 @@ import { ElMessage, UploadFile, ElMessageBox } from 'element-plus';
 
 type WindowInfo = { hwnd: number; pid: number; exe_name: string; title: string; is_foreground: boolean; };
 type VisionMarker = { x: number; y: number; radius: number; arc_ratio: number; green_ratio: number; };
+type InventoryBlock = {
+  id: string;
+  name: string;
+  image: string;
+  baseColor: string;
+  mask: number;
+  dyeable?: boolean;
+};
+type DragPayload = { source: 'backpack' | 'hotbar'; blockId: string; fromSlot?: number };
+type LibraryPayload = {
+  blocks: InventoryBlock[];
+  hotbar_slots: Array<string | null>;
+};
+type DyeCandidate = { slot: number; block: InventoryBlock };
+type DyeSelection = {
+  slot: number;
+  block: InventoryBlock;
+  dyeInputColor: string;
+  predictedColor: string;
+  exact: boolean;
+  distance: number;
+};
+
+const IRON_BLOCK_ID = 'blk-iron';
+const DEFAULT_BLOCKS: InventoryBlock[] = [
+  { id: IRON_BLOCK_ID, name: '铁板', image: '', baseColor: '#FFFFFF', mask: 1.0, dyeable: false },
+  { id: 'blk-gray', name: '灰石砖', image: '', baseColor: '#BFBFBF', mask: 0.82, dyeable: true },
+  { id: 'blk-wood', name: '木板', image: '', baseColor: '#D0B27A', mask: 0.7, dyeable: true },
+];
 
 const API_BASE = 'http://127.0.0.1:8000/api';
+const localAssetMap = import.meta.glob('./assets/**/*', { eager: true, import: 'default' }) as Record<string, string>;
 const isCollapse = ref(false);
 const activeTab = ref('image');
 const lastDyeAction = ref<(() => Promise<boolean>) | null>(null);
@@ -384,7 +537,7 @@ const configConfirmY = ref(1052);
 const configVerifyX = ref(2291);
 const configVerifyY = ref(933);
 const moveSampleRate = ref(60);
-const dyeRetryCount = ref(2);
+const dyeRetryCount = ref(1); //包含大量纯黑纯白色时应适当降低
 const focusSettleDelay = ref(0.05);
 const placeKeyDelay = ref(0.1);
 const placeClickDelay = ref(0.1);
@@ -395,6 +548,525 @@ const dyeConfirmDelay = ref(0.2);
 const dyeReturnDelay = ref(0.1);
 const uiClickDelay = ref(0.05);
 const uiClipboardDelay = ref(0.05);
+
+const backpackBlocks = ref<InventoryBlock[]>([...DEFAULT_BLOCKS]);
+const hotbarSlots = ref<Array<string | null>>([IRON_BLOCK_ID, null, null, null, null, null, null, null, null]);
+const activeHotbarIndex = ref(1);
+const selectedBlockId = ref<string>(DEFAULT_BLOCKS[0].id);
+const dragPayload = ref<DragPayload | null>(null);
+const authoredLibrary = ref<LibraryPayload | null>(null);
+const planningExactCount = ref(0);
+const planningApproxCount = ref(0);
+const planningApproxExamples = ref<string[]>([]);
+const displayColorOverrides = ref<Record<string, string>>({});
+let persistLibraryTimer: number | null = null;
+
+const getBlockById = (blockId: string) => backpackBlocks.value.find((b) => b.id === blockId) || null;
+const selectedBlock = computed(() => backpackBlocks.value.find((b) => b.id === selectedBlockId.value) || null);
+const selectedBlockIsIron = computed(() => selectedBlock.value?.id === IRON_BLOCK_ID);
+const activeBuildBlock = computed(() => {
+  const blockId = hotbarSlots.value[activeHotbarIndex.value];
+  if (!blockId) return null;
+  return getBlockById(blockId);
+});
+
+const makeBlockId = () => `blk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+const normalizeLibraryBlock = (b: any): InventoryBlock => {
+  const id = String(b?.id || makeBlockId());
+  return {
+    id,
+    name: id === IRON_BLOCK_ID ? '铁板' : String(b?.name || '未命名方块'),
+    image: String(b?.image || ''),
+    baseColor: id === IRON_BLOCK_ID ? '#FFFFFF' : sanitizeHex(String(b?.baseColor || '#FFFFFF')),
+    mask: id === IRON_BLOCK_ID ? 1.0 : Math.max(0, Math.min(1, Number(b?.mask ?? 1))),
+    dyeable: id === IRON_BLOCK_ID ? false : Boolean(b?.dyeable ?? true),
+  };
+};
+
+const loadAuthoredBlockLibrary = async (): Promise<boolean> => {
+  try {
+    const res = await axios.get(`${API_BASE}/system/block-library`);
+    if (res.data?.status !== 'success') {
+      authoredLibrary.value = null;
+      return false;
+    }
+    const blocks = Array.isArray(res.data.blocks) ? res.data.blocks.map(normalizeLibraryBlock) : [];
+    const hotbarRaw = Array.isArray(res.data.hotbar_slots) ? res.data.hotbar_slots : [];
+    const hotbar: Array<string | null> = new Array(9).fill(null);
+    for (let i = 0; i < Math.min(9, hotbarRaw.length); i++) {
+      hotbar[i] = typeof hotbarRaw[i] === 'string' ? hotbarRaw[i] : null;
+    }
+    authoredLibrary.value = { blocks, hotbar_slots: hotbar };
+    addLog('[背包] 已加载作者方块库 block_library.json');
+    return true;
+  } catch (error) {
+    authoredLibrary.value = null;
+    addLog('[背包] 未检测到作者方块库，继续使用本地/默认配置');
+    return false;
+  }
+};
+
+const normalizeHotbarUnique = (slots: Array<string | null>): Array<string | null> => {
+  const result = [...slots];
+  result[0] = IRON_BLOCK_ID;
+  const used = new Set<string>([IRON_BLOCK_ID]);
+  for (let i = 1; i < result.length; i++) {
+    const id = result[i];
+    if (!id) continue;
+    if (used.has(id)) {
+      result[i] = null;
+      continue;
+    }
+    used.add(id);
+  }
+  return result;
+};
+
+const persistInventoryState = () => {
+  if (persistLibraryTimer !== null) {
+    window.clearTimeout(persistLibraryTimer);
+  }
+  persistLibraryTimer = window.setTimeout(async () => {
+    try {
+      await axios.post(`${API_BASE}/system/block-library`, {
+        blocks: backpackBlocks.value,
+        hotbar_slots: hotbarSlots.value,
+      });
+    } catch (error) {
+      addLog('[背包] 自动保存方块库失败');
+    }
+  }, 300);
+};
+
+const ensureIronInBackpackAndHotbar = () => {
+  if (!backpackBlocks.value.some((b) => b.id === IRON_BLOCK_ID)) {
+    backpackBlocks.value.unshift({ id: IRON_BLOCK_ID, name: '铁板', image: '', baseColor: '#FFFFFF', mask: 1.0, dyeable: false });
+  }
+  const ironBlock = backpackBlocks.value.find((b) => b.id === IRON_BLOCK_ID);
+  if (ironBlock) {
+    ironBlock.name = '铁板';
+    ironBlock.baseColor = '#FFFFFF';
+    ironBlock.mask = 1.0;
+    ironBlock.dyeable = false;
+  }
+  if (hotbarSlots.value.length !== 9) {
+    hotbarSlots.value = [IRON_BLOCK_ID, null, null, null, null, null, null, null, null];
+  }
+  hotbarSlots.value = normalizeHotbarUnique(hotbarSlots.value);
+};
+
+const restoreInventoryState = () => {
+  try {
+    if (authoredLibrary.value?.blocks?.length) {
+      backpackBlocks.value = authoredLibrary.value.blocks.map((b) => ({ ...b }));
+    }
+    if (authoredLibrary.value?.hotbar_slots?.length) {
+      hotbarSlots.value = authoredLibrary.value.hotbar_slots.slice(0, 9);
+    }
+    activeHotbarIndex.value = 1;
+    selectedBlockId.value = backpackBlocks.value[0]?.id || IRON_BLOCK_ID;
+    ensureIronInBackpackAndHotbar();
+  } catch (error) {
+    addLog('[背包] 读取方块库失败，已使用默认配置');
+    ensureIronInBackpackAndHotbar();
+  }
+};
+
+const saveBlockLibraryNow = async () => {
+  try {
+    await axios.post(`${API_BASE}/system/block-library`, {
+      blocks: backpackBlocks.value,
+      hotbar_slots: hotbarSlots.value,
+    });
+    ElMessage.success('方块库已保存到 block_library.json');
+  } catch (error: any) {
+    ElMessage.error('保存方块库失败');
+  }
+};
+
+const reloadBlockLibraryNow = async () => {
+  const ok = await loadAuthoredBlockLibrary();
+  if (!ok) {
+    ElMessage.warning('未找到 block_library.json，已保留当前方块配置');
+    return;
+  }
+  restoreInventoryState();
+  ElMessage.success('已从 block_library.json 重载方块库');
+};
+
+const addInventoryBlock = () => {
+  const newBlock: InventoryBlock = {
+    id: makeBlockId(),
+    name: `新方块 ${backpackBlocks.value.length + 1}`,
+    image: '',
+    baseColor: '#FFFFFF',
+    mask: 1,
+  };
+  backpackBlocks.value.push(newBlock);
+  selectedBlockId.value = newBlock.id;
+};
+
+const removeInventoryBlock = (blockId: string) => {
+  if (blockId === IRON_BLOCK_ID) {
+    ElMessage.warning('铁板是系统保留方块，不能删除');
+    return;
+  }
+  if (backpackBlocks.value.length <= 1) {
+    ElMessage.warning('至少保留一个方块');
+    return;
+  }
+  backpackBlocks.value = backpackBlocks.value.filter((b) => b.id !== blockId);
+  hotbarSlots.value = hotbarSlots.value.map((id) => (id === blockId ? null : id));
+  if (selectedBlockId.value === blockId) {
+    selectedBlockId.value = backpackBlocks.value[0].id;
+  }
+};
+
+const handleBackpackItemClick = (blockId: string) => {
+  selectedBlockId.value = blockId;
+};
+
+const assignBlockToHotbar = (blockId: string, slotIndex: number) => {
+  if (slotIndex < 0 || slotIndex > 8) return;
+  if (slotIndex === 0 && blockId !== IRON_BLOCK_ID) {
+    ElMessage.warning('1号槽位固定为铁板');
+    return;
+  }
+  if (slotIndex !== 0 && blockId === IRON_BLOCK_ID) {
+    ElMessage.warning('铁板固定在1号槽位');
+    return;
+  }
+  if (blockId !== IRON_BLOCK_ID) {
+    for (let i = 1; i < hotbarSlots.value.length; i++) {
+      if (hotbarSlots.value[i] === blockId && i !== slotIndex) {
+        hotbarSlots.value[i] = null;
+      }
+    }
+  }
+  hotbarSlots.value[slotIndex] = blockId;
+  selectedBlockId.value = blockId;
+};
+
+const assignSelectedBlockToActiveSlot = () => {
+  if (!selectedBlockId.value) {
+    ElMessage.warning('请先在背包中选择一个方块');
+    return;
+  }
+  assignBlockToHotbar(selectedBlockId.value, activeHotbarIndex.value);
+};
+
+const assignSelectedBlockToSlot = (slotIndex: number) => {
+  if (slotIndex === 0) {
+    ElMessage.warning('1号槽位固定为铁板');
+    return;
+  }
+  if (!selectedBlockId.value) {
+    ElMessage.warning('请先在背包中选择一个方块');
+    return;
+  }
+  assignBlockToHotbar(selectedBlockId.value, slotIndex);
+};
+
+const onDragStartFromBackpack = (blockId: string) => {
+  dragPayload.value = { source: 'backpack', blockId };
+};
+
+const onDragStartFromHotbar = (fromSlot: number) => {
+  if (fromSlot === 0) return;
+  const blockId = hotbarSlots.value[fromSlot];
+  if (!blockId) return;
+  dragPayload.value = { source: 'hotbar', blockId, fromSlot };
+};
+
+const onDropToHotbar = (slotIndex: number) => {
+  const payload = dragPayload.value;
+  if (!payload) return;
+
+  if (slotIndex === 0 && payload.blockId !== IRON_BLOCK_ID) {
+    ElMessage.warning('1号槽位固定为铁板');
+    dragPayload.value = null;
+    return;
+  }
+  if (payload.blockId === IRON_BLOCK_ID && slotIndex !== 0) {
+    ElMessage.warning('铁板固定在1号槽位');
+    dragPayload.value = null;
+    return;
+  }
+
+  if (payload.source === 'hotbar' && payload.fromSlot !== undefined) {
+    if (payload.fromSlot === 0) {
+      dragPayload.value = null;
+      return;
+    }
+    const tmp = hotbarSlots.value[slotIndex];
+    if (payload.blockId !== IRON_BLOCK_ID) {
+      for (let i = 1; i < hotbarSlots.value.length; i++) {
+        if (hotbarSlots.value[i] === payload.blockId && i !== slotIndex && i !== payload.fromSlot) {
+          hotbarSlots.value[i] = null;
+        }
+      }
+    }
+    hotbarSlots.value[slotIndex] = payload.blockId;
+    hotbarSlots.value[payload.fromSlot] = tmp;
+  } else {
+    if (payload.blockId !== IRON_BLOCK_ID) {
+      for (let i = 1; i < hotbarSlots.value.length; i++) {
+        if (hotbarSlots.value[i] === payload.blockId && i !== slotIndex) {
+          hotbarSlots.value[i] = null;
+        }
+      }
+    }
+    hotbarSlots.value[slotIndex] = payload.blockId;
+  }
+  dragPayload.value = null;
+};
+
+const onDropToBackpack = () => {
+  const payload = dragPayload.value;
+  if (!payload) return;
+  if (payload.source === 'hotbar' && payload.fromSlot !== undefined) {
+    if (payload.fromSlot === 0) {
+      dragPayload.value = null;
+      return;
+    }
+    hotbarSlots.value[payload.fromSlot] = null;
+  }
+  dragPayload.value = null;
+};
+
+const blockThumbStyle = (block: InventoryBlock) => ({
+  backgroundColor: sanitizeHex(block.baseColor),
+  opacity: `${Math.max(0.25, Math.min(1, block.mask))}`,
+});
+
+const getBlockThumbStyleById = (blockId: string) => {
+  const block = getBlockById(blockId);
+  return block ? blockThumbStyle(block) : {};
+};
+
+const sanitizeHex = (hex: string): string => {
+  const val = (hex || '').trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(val)) return val.toUpperCase();
+  if (/^[0-9a-fA-F]{6}$/.test(val)) return `#${val.toUpperCase()}`;
+  return '#FFFFFF';
+};
+
+const resolveBlockImageSrc = (raw: string): string => {
+  const input = (raw || '').trim();
+  if (!input) return '';
+
+  // Keep external/data urls untouched.
+  if (/^(https?:|data:|blob:)/i.test(input)) return input;
+
+  // Absolute path from site root, e.g. /assets/foo.png in public folder.
+  if (input.startsWith('/')) return input;
+
+  const normalized = input.replace(/\\/g, '/');
+  const candidates: string[] = [];
+
+  if (normalized.startsWith('@/assets/')) {
+    candidates.push(`./assets/${normalized.slice('@/assets/'.length)}`);
+  }
+  if (normalized.startsWith('src/assets/')) {
+    candidates.push(`./assets/${normalized.slice('src/assets/'.length)}`);
+  }
+  if (normalized.startsWith('assets/')) {
+    candidates.push(`./${normalized}`);
+  }
+  candidates.push(`./assets/${normalized}`);
+
+  for (const key of candidates) {
+    if (localAssetMap[key]) {
+      return localAssetMap[key];
+    }
+  }
+
+  const localPathCandidates: string[] = [];
+  if (normalized.startsWith('assets/')) {
+    localPathCandidates.push(normalized);
+    localPathCandidates.push(`frontend/src/${normalized}`);
+  } else {
+    localPathCandidates.push(normalized);
+    localPathCandidates.push(`assets/${normalized}`);
+    localPathCandidates.push(`frontend/src/assets/${normalized}`);
+  }
+
+  return `${API_BASE}/system/local-file?path=${encodeURIComponent(localPathCandidates[0])}&fallback=${encodeURIComponent(localPathCandidates.slice(1).join('|'))}`;
+};
+
+const hexToRgb = (hex: string): [number, number, number] => {
+  const normalized = sanitizeHex(hex).slice(1);
+  return [
+    parseInt(normalized.slice(0, 2), 16),
+    parseInt(normalized.slice(2, 4), 16),
+    parseInt(normalized.slice(4, 6), 16),
+  ];
+};
+
+const rgbToHex = (rgb: [number, number, number]): string => {
+  const clamped = rgb.map((v) => Math.max(0, Math.min(255, Math.round(v)))) as [number, number, number];
+  return `#${clamped[0].toString(16).padStart(2, '0')}${clamped[1].toString(16).padStart(2, '0')}${clamped[2].toString(16).padStart(2, '0')}`.toUpperCase();
+};
+
+const predictOutputHex = (dyeHex: string, baseHex: string, mask: number): string => {
+  const dye = hexToRgb(dyeHex);
+  const base = hexToRgb(baseHex);
+  const m = Math.max(0, Math.min(1, mask));
+  const out: [number, number, number] = [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    const factor = (1 - m) + m * Math.sqrt(dye[i] / 255);
+    out[i] = base[i] * factor;
+  }
+  return rgbToHex(out);
+};
+
+const invertDyeForTargetOutput = (targetHex: string, baseHex: string, mask: number): string => {
+  const target = hexToRgb(targetHex);
+  const base = hexToRgb(baseHex);
+  const m = Math.max(0, Math.min(1, mask));
+  const dye: [number, number, number] = [255, 255, 255];
+
+  for (let i = 0; i < 3; i++) {
+    if (base[i] <= 0 || m <= 1e-6) {
+      dye[i] = 255;
+      continue;
+    }
+    const ratio = target[i] / base[i];
+    const inner = (ratio - (1 - m)) / m;
+    const clamped = Math.max(0, Math.min(1, inner));
+    dye[i] = (clamped * clamped) * 255;
+  }
+  return rgbToHex(dye);
+};
+
+const isColorClose = (actualHex: string, expectedHex: string, tolerance = 12): boolean => {
+  const a = hexToRgb(actualHex);
+  const b = hexToRgb(expectedHex);
+  return Math.abs(a[0] - b[0]) <= tolerance
+    && Math.abs(a[1] - b[1]) <= tolerance
+    && Math.abs(a[2] - b[2]) <= tolerance;
+};
+
+const colorDistance = (aHex: string, bHex: string): number => {
+  const a = hexToRgb(aHex);
+  const b = hexToRgb(bHex);
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+};
+
+const canBlockReachTargetColor = (targetHex: string, block: InventoryBlock): boolean => {
+  const target = hexToRgb(targetHex);
+  const base = hexToRgb(block.baseColor);
+  const m = Math.max(0, Math.min(1, block.mask));
+  for (let i = 0; i < 3; i++) {
+    const minOut = base[i] * (1 - m);
+    const maxOut = base[i];
+    if (target[i] < minOut - 0.5 || target[i] > maxOut + 0.5) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const getDyeCandidatesFromHotbar = (): DyeCandidate[] => {
+  const candidates: DyeCandidate[] = [];
+  for (let i = 1; i < hotbarSlots.value.length; i++) {
+    const blockId = hotbarSlots.value[i];
+    if (!blockId) continue;
+    const block = getBlockById(blockId);
+    if (!block || !block.dyeable) continue;
+    candidates.push({ slot: i + 1, block });
+  }
+  return candidates;
+};
+
+const chooseBestDyeForTarget = (targetHex: string, candidates: DyeCandidate[]): DyeSelection | null => {
+  const target = sanitizeHex(targetHex);
+
+  for (const candidate of candidates) {
+    const dyeInputColor = invertDyeForTargetOutput(target, candidate.block.baseColor, candidate.block.mask);
+    const predictedColor = predictOutputHex(dyeInputColor, candidate.block.baseColor, candidate.block.mask);
+    const exact = canBlockReachTargetColor(target, candidate.block) && isColorClose(predictedColor, target, 1);
+    if (exact) {
+      return {
+        slot: candidate.slot,
+        block: candidate.block,
+        dyeInputColor,
+        predictedColor,
+        exact: true,
+        distance: colorDistance(predictedColor, target),
+      };
+    }
+  }
+
+  let best: DyeSelection | null = null;
+  for (const candidate of candidates) {
+    const dyeInputColor = invertDyeForTargetOutput(target, candidate.block.baseColor, candidate.block.mask);
+    const predictedColor = predictOutputHex(dyeInputColor, candidate.block.baseColor, candidate.block.mask);
+    const distance = colorDistance(predictedColor, target);
+    const current: DyeSelection = {
+      slot: candidate.slot,
+      block: candidate.block,
+      dyeInputColor,
+      predictedColor,
+      exact: false,
+      distance,
+    };
+    if (!best || current.distance < best.distance) {
+      best = current;
+    }
+  }
+  return best;
+};
+
+const calculateMaskForSelectedBlock = async () => {
+  const block = selectedBlock.value;
+  if (!block) {
+    ElMessage.warning('请先在背包中选择一个方块');
+    return;
+  }
+  if (!block.dyeable) {
+    ElMessage.warning('铁板不支持染色，不需要计算遮罩');
+    return;
+  }
+
+  const baseG = hexToRgb(block.baseColor)[1];
+  if (baseG <= 0) {
+    ElMessage.error('当前方块底色的 G 通道为 0，无法用该公式计算 M');
+    return;
+  }
+
+  try {
+    await ElMessageBox.alert(
+      '请先将当前方块染色为 #FF0000，然后取色并输入“染色后方块颜色”的 Hex（例如 #A1B2C3）。',
+      '计算遮罩 M',
+      { confirmButtonText: '继续' }
+    );
+
+    const { value } = await ElMessageBox.prompt(
+      '请输入染色后方块颜色（HEX）',
+      '计算遮罩 M',
+      {
+        inputPlaceholder: '#RRGGBB',
+        confirmButtonText: '计算',
+        cancelButtonText: '取消',
+      }
+    );
+
+    const screenshotHex = sanitizeHex(value || '');
+    const screenshotG = hexToRgb(screenshotHex)[1];
+    const rawMask = 1 - (screenshotG / baseG);
+    const clampedMask = Math.max(0, Math.min(1, rawMask));
+
+    block.mask = Number(clampedMask.toFixed(4));
+    ElMessage.success(`计算完成：M = ${block.mask.toFixed(4)}`);
+    addLog(`[背包] 方块 ${block.name} 遮罩计算完成 baseG=${baseG} screenshotG=${screenshotG} M=${block.mask.toFixed(4)}`);
+  } catch (error: any) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error('计算遮罩失败，请检查输入是否为合法 Hex');
+    }
+  }
+};
 
 // Blueprint Gen state
 const bpWidth = ref(32);
@@ -605,18 +1277,75 @@ const getPlanningCompletedBlocks = () => {
 const planCurrentBlueprint = async () => {
   if (!currentBlueprint.value) return null;
   try {
+    const dyeCandidates = getDyeCandidatesFromHotbar();
+    if (dyeCandidates.length === 0) {
+      ElMessage.error('快捷栏2-9号位没有可染色方块，请先在背包中配置并放入快捷栏');
+      return null;
+    }
+
     const planRes = await axios.post(`${API_BASE}/blueprint/plan`, {
       blueprint: currentBlueprint.value,
       pending_blocks: getPendingBlocksList(),
       completed_blocks: getPlanningCompletedBlocks(),
     });
-    currentPipeline.value = planRes.data.pipeline || [];
+
+    const rawPipeline = planRes.data.pipeline || [];
+    let exactCount = 0;
+    let approxCount = 0;
+    const approxExamples: string[] = [];
+
+    const nextDisplayOverrides: Record<string, string> = {};
+    const mappedPipeline = rawPipeline.map((step: any) => {
+      if (step.type !== 'place_and_dye') return step;
+
+      const targetColor = sanitizeHex(step.color);
+      const best = chooseBestDyeForTarget(targetColor, dyeCandidates);
+      if (!best) {
+        throw new Error(`无法为像素(${step.x},${step.y})找到可用方块`);
+      }
+
+      if (best.exact) {
+        exactCount++;
+      } else {
+        approxCount++;
+        nextDisplayOverrides[`${step.x},${step.y}`] = best.predictedColor;
+        if (approxExamples.length < 8) {
+          approxExamples.push(`(${step.x},${step.y}) 目标${targetColor} -> ${best.block.name}@${best.slot} 预计${best.predictedColor}`);
+        }
+      }
+
+      return {
+        ...step,
+        // step.color 统一改成“实际输入染色码”，目标显示色另存 target_color
+        color: best.dyeInputColor,
+        target_color: targetColor,
+        expected_output_color: best.predictedColor,
+        block_id: best.block.id,
+        block_name: best.block.name,
+        place_slot: best.slot,
+        dye_slot: best.slot,
+        exact_match: best.exact,
+        color_distance: Number(best.distance.toFixed(3)),
+      };
+    });
+
+    planningExactCount.value = exactCount;
+    planningApproxCount.value = approxCount;
+    planningApproxExamples.value = approxExamples;
+    displayColorOverrides.value = nextDisplayOverrides;
+    currentPipeline.value = mappedPipeline;
     pipelineProgress.value = 0;
     pipelineTotal.value = currentPipeline.value.length;
     skippedPlannedBlocks.value = planRes.data.skipped_blocks || [];
     planDirty.value = false;
     drawBlueprint(currentBlueprint.value, currentPipeline.value);
-    addLog(`规划完成，共 ${pipelineTotal.value} 步`);
+    addLog(`规划完成，共 ${pipelineTotal.value} 步，精确匹配 ${exactCount}，近似匹配 ${approxCount}`);
+    if (approxCount > 0) {
+      ElMessage.warning(`有 ${approxCount} 个像素无法精确染出，已自动使用最接近颜色`);
+      for (const msg of approxExamples) {
+        addLog(`[近似染色] ${msg}`);
+      }
+    }
     return planRes.data;
   } catch (error: any) {
     const errDetailObj = error?.response?.data?.detail;
@@ -687,6 +1416,10 @@ const resetProgress = () => {
   completedBlocks.value.clear();
   planDirty.value = true;
   skippedPlannedBlocks.value = [];
+  planningExactCount.value = 0;
+  planningApproxCount.value = 0;
+  planningApproxExamples.value = [];
+  displayColorOverrides.value = {};
   drawBlueprint(currentBlueprint.value, currentPipeline.value);
   addLog('已重置任务进度');
 };
@@ -831,6 +1564,46 @@ watch(debugMode, (enabled) => {
   }
 });
 
+watch(backpackBlocks, (blocks) => {
+  for (const block of blocks) {
+    if (block.id === IRON_BLOCK_ID) {
+      block.name = '铁板';
+      block.baseColor = '#FFFFFF';
+      block.mask = 1.0;
+      block.dyeable = false;
+      continue;
+    }
+    block.baseColor = sanitizeHex(block.baseColor);
+    block.mask = Math.max(0, Math.min(1, Number(block.mask ?? 1)));
+    block.dyeable = true;
+  }
+  ensureIronInBackpackAndHotbar();
+  persistInventoryState();
+}, { deep: true });
+
+watch([hotbarSlots, activeHotbarIndex, selectedBlockId], () => {
+  const existingIds = new Set(backpackBlocks.value.map((b) => b.id));
+  const normalizedSlots = hotbarSlots.value.map((id) => (id && existingIds.has(id) ? id : null));
+  const changed = normalizedSlots.some((id, idx) => id !== hotbarSlots.value[idx]);
+  if (changed) {
+    hotbarSlots.value = normalizedSlots;
+  }
+  hotbarSlots.value[0] = IRON_BLOCK_ID;
+
+  if (!selectedBlockId.value || !existingIds.has(selectedBlockId.value)) {
+    selectedBlockId.value = backpackBlocks.value[0]?.id || '';
+  }
+
+  if (activeHotbarIndex.value === 0) {
+    activeHotbarIndex.value = 1;
+  }
+  if (activeHotbarIndex.value < 1 || activeHotbarIndex.value > 8) {
+    activeHotbarIndex.value = 1;
+  }
+
+  persistInventoryState();
+}, { deep: true });
+
 const connectWebSocket = () => {
   ws = new WebSocket('ws://127.0.0.1:8000/api/ws/logs');
   ws.onmessage = (event) => addBackendLog(event.data);
@@ -905,11 +1678,11 @@ const drawBlueprint = (bp: any, pipeline: any[] = []) => {
     }
     
     for (const block of bp.blocks) {
-      ctx.fillStyle = block.color;
+      const key = `${block.x},${block.y}`;
+      ctx.fillStyle = displayColorOverrides.value[key] || block.color;
       ctx.fillRect(block.x * CELL_SIZE, block.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
       
       if (!isStatic) {
-        const key = `${block.x},${block.y}`;
         const isCompleted = completedBlocks.value.has(key);
         const isPending = pendingBlocks.value.has(key);
 
@@ -1034,6 +1807,7 @@ const exportTask = async () => {
     pipelineProgress: pipelineProgress.value,
     completedBlocks: Array.from(completedBlocks.value),
     currentPipeline: currentPipeline.value,
+    displayColorOverrides: displayColorOverrides.value,
     selectionRects: selectionRects.value,
     pendingBlocks: Array.from(pendingBlocks.value),
     ignoredBlocks: Array.from(ignoredBlocks.value),
@@ -1088,6 +1862,7 @@ const importTask = (file: UploadFile) => {
       ignoredBlocks.value = new Set(data.ignoredBlocks || []);
       planDirty.value = data.planDirty ?? currentPipeline.value.length === 0;
       skippedPlannedBlocks.value = [];
+      displayColorOverrides.value = data.displayColorOverrides || {};
       
       bpWidth.value = data.blueprint.resolution[0];
       bpHeight.value = data.blueprint.resolution[1];
@@ -1120,6 +1895,10 @@ const generateBlueprint = async () => {
       currentPipeline.value = [];
       planDirty.value = true;
       skippedPlannedBlocks.value = [];
+      displayColorOverrides.value = {};
+      planningExactCount.value = 0;
+      planningApproxCount.value = 0;
+      planningApproxExamples.value = [];
       drawBlueprint(currentBlueprint.value, []);
       nextTick(() => { calculateInitialZoom(); });
       ElMessage.success('蓝图处理完成');
@@ -1134,7 +1913,7 @@ const generateBlueprint = async () => {
 // ----------------------
 // Task Runner Macros
 // ----------------------
-const getTargetPayload = () => ({
+const getTargetPayload = (slotOverride?: number) => ({
   exe_name: selectedWindow.value?.exe_name || 'Calabiyau-Win64-Shipping.exe',
   window_hwnd: selectedWindowHwnd.value ?? undefined,
   focus_settle_delay: focusSettleDelay.value,
@@ -1149,6 +1928,8 @@ const getTargetPayload = () => ({
   ui_clipboard_delay: uiClipboardDelay.value,
   move_sample_rate: moveSampleRate.value,
   humanize_level: humanizeLevel.value,
+  place_slot: slotOverride ?? (activeHotbarIndex.value + 1),
+  dye_slot: slotOverride ?? (activeHotbarIndex.value + 1),
 });
 
 const startAutoBuild = async () => {
@@ -1266,24 +2047,35 @@ const startAutoBuild = async () => {
       }
       if (step.type === 'place_and_dye') {
         await runExclusiveAction(async () => {
+          const stepSlot = Number(step.dye_slot ?? step.place_slot ?? (activeHotbarIndex.value + 1));
+          const targetOutputColor = sanitizeHex(step.target_color || step.color);
+          const dyeInputColor = sanitizeHex(step.color);
+          const expectedOutputColor = sanitizeHex(step.expected_output_color || targetOutputColor);
+          const stepBlock = step.block_id ? getBlockById(step.block_id) : null;
+          const predictedOutputColor = stepBlock
+            ? predictOutputHex(dyeInputColor, stepBlock.baseColor, stepBlock.mask)
+            : expectedOutputColor;
+
+          addLog(`[选材] (${step.x},${step.y}) ${step.block_name || stepBlock?.name || '未知方块'} @ 槽位${stepSlot} input=${dyeInputColor} target=${targetOutputColor}${step.exact_match ? ' [精确]' : ' [近似]'}`);
+
           let currentBlockRetryCount = 0; // 主流程首次放置染色的异常校验计数
 
           const executeDye = async (isRecovery = false) => {
             // 放置 (如果是恢复重试，说明面板未关闭且方块已放，不需要重新放置)
             if (!isRecovery) {
-              await axios.post(`${API_BASE}/macro/place`, getTargetPayload());
+              await axios.post(`${API_BASE}/macro/place`, getTargetPayload(stepSlot));
             }
 
             const dyeWithVerify = async (isRepaste = false) => {
               // 染色核心宏：执行粘贴逻辑
               const dyePayload = {
-                ...getTargetPayload(),
-                hex_color: step.color,
+                ...getTargetPayload(stepSlot),
+                hex_color: dyeInputColor,
                 color_input_x: configPaletteX.value,
                 color_input_y: configPaletteY.value,
                 repaste_only: isRepaste
               };
-              addLog(`[Dye] 请求 /macro/dye color=${step.color} repaste=${isRepaste}`);
+              addLog(`[Dye] 请求 /macro/dye input=${dyeInputColor} target=${targetOutputColor} repaste=${isRepaste}`);
               try {
                 const dyeRes = await axios.post(`${API_BASE}/macro/dye`, dyePayload);
                 const reqId = (dyeRes.headers as any)?.['x-request-id'];
@@ -1294,7 +2086,7 @@ const startAutoBuild = async () => {
               }
 
               // 染色后取色校验
-              const targetColor = step.color.toUpperCase();
+              const targetColor = expectedOutputColor.toUpperCase();
               let verifyRes;
               try {
                 verifyRes = await axios.post(`${API_BASE}/vision/get-color`, {
@@ -1309,9 +2101,12 @@ const startAutoBuild = async () => {
                   y: configVerifyY.value
                 });
               }
-              const actualColor = verifyRes.data.color.toUpperCase();
+              const actualColor = sanitizeHex(verifyRes.data.color).toUpperCase();
               const isValidColor = !(/^#(000000|222222|FFFFFF)$/i.test(actualColor));
-              const isSameColor = actualColor === targetColor;
+              const isSameColor = isColorClose(actualColor, targetColor);
+              if (!isSameColor) {
+                addLog(`[Verify] 目标=${targetColor} 预测=${predictedOutputColor} 实测=${actualColor}`);
+              }
               
               // 异常状态检测（全黑/全白等画面异常，且不是目标颜色）
               if (!isValidColor && !isSameColor) {
@@ -1338,7 +2133,7 @@ const startAutoBuild = async () => {
             
             // 统一点击“确认”关闭染色面板
             await axios.post(`${API_BASE}/macro/dye-confirm`, {
-              ...getTargetPayload(),
+              ...getTargetPayload(stepSlot),
               confirm_button_x: configConfirmX.value,
               confirm_button_y: configConfirmY.value
             });
@@ -1739,7 +2534,9 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
+  await loadAuthoredBlockLibrary();
+  restoreInventoryState();
   refreshWindows();
   refreshForegroundWindow();
   connectWebSocket();
@@ -1798,6 +2595,107 @@ onBeforeUnmount(() => {
 }
 .pixel-canvas { image-rendering: pixelated; border: 1px solid #e2e8f0; background: white; }
 .static-canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+/* Inventory page */
+.inventory-header { display: flex; justify-content: space-between; align-items: center; }
+.backpack-grid {
+  min-height: 220px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+}
+.backpack-item {
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 8px;
+  cursor: pointer;
+  user-select: none;
+  background: #ffffff;
+}
+.backpack-item.selected {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+.block-thumb,
+.slot-thumb {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  border: 1px solid #dbeafe;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.block-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.block-name,
+.slot-name {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #334155;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hotbar-row {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(76px, 1fr));
+  gap: 8px;
+}
+.hotbar-slot {
+  min-height: 96px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 6px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+.hotbar-slot.active {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+}
+.hotbar-slot.fixed {
+  border-color: #f59e0b;
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.4);
+}
+.slot-empty {
+  min-height: 82px;
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+  font-weight: 600;
+}
+.slot-content {
+  position: relative;
+}
+.slot-index {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  z-index: 2;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(15, 23, 42, 0.7);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.slot-fixed-tip {
+  margin-top: 4px;
+  text-align: center;
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 600;
+}
+.block-editor .setting-item .label { width: 72px; }
 
 /* Common Components */
 .settings-card { border-radius: 12px; border: 1px solid #e2e8f0; padding: 5px; }

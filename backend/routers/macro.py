@@ -27,6 +27,8 @@ class BaseGameRequest(BaseModel):
     ui_clipboard_delay: float = Field(0.2, ge=0.0, le=5.0)
     move_sample_rate: float = Field(100.0, ge=1.0, le=1000.0)
     humanize_level: int = Field(0, ge=0, le=3)
+    place_slot: int = Field(2, ge=1, le=9)
+    dye_slot: int = Field(2, ge=1, le=9)
 
 class DyeRequest(BaseGameRequest):
     hex_color: str
@@ -88,9 +90,8 @@ def dye_block(req: DyeRequest, dd: Any = Depends(get_dd)):
         ui = UIInteraction(dd, req.exe_name, humanize_level=req.humanize_level)
 
         if not req.repaste_only:
-            print("[macro.dye] switch slot to 1 and open dye panel")
-            # Switch back to iron plate (slot 1) before dyeing
-            dd.key_press("1")
+            print(f"[macro.dye] switch slot to {req.dye_slot} and open dye panel")
+            dd.key_press(str(req.dye_slot))
             time.sleep(req.dye_return_delay)
 
             ui.open_color_panel()
@@ -156,7 +157,7 @@ def dye_confirm(req: DyeConfirmRequest, dd: Any = Depends(get_dd)):
 @router.post("/place")
 def place_block(req: ActionRequest, dd: Any = Depends(get_dd)):
     ensure_game_active(req.exe_name, req.window_hwnd, req.focus_settle_delay)
-    dd.key_press("2")
+    dd.key_press(str(req.place_slot))
     time.sleep(req.place_key_delay)
     dd.mouse_click("left")
     time.sleep(req.place_click_delay)

@@ -184,10 +184,10 @@ class VisionCore:
             np.array([0, 245, 0], dtype=np.uint8),
             np.array([30, 255, 30], dtype=np.uint8),
         )
-        # 白色虚影遮挡叠加色: RGB (165~175,195~205,165~175)
+        # 白色虚影遮挡叠加色: RGB (160~175,190~205,160~175)
         ghost_mask = cv2.inRange(
             rgb,
-            np.array([165, 195, 165], dtype=np.uint8),
+            np.array([160, 190, 160], dtype=np.uint8),
             np.array([175, 205, 175], dtype=np.uint8),
         )
 

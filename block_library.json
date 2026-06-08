@@ -1,0 +1,55 @@
+{
+  "blocks": [
+    {
+      "id": "blk-iron",
+      "name": "铁板",
+      "image": "assets/铁板.png",
+      "baseColor": "#FFFFFF",
+      "mask": 1,
+      "dyeable": false
+    },
+    {
+      "id": "blk-mq56uauv-9eew2",
+      "name": "可贴墙模块",
+      "image": "assets/可贴墙模块.png",
+      "baseColor": "#949498",
+      "mask": 1,
+      "dyeable": true
+    },
+    {
+      "id": "blk-mq56v8u1-3ryjs",
+      "name": "雪块",
+      "image": "assets/雪块.png",
+      "baseColor": "#DCDDE3",
+      "mask": 0.48,
+      "dyeable": true
+    },
+    {
+      "id": "blk-mq57xr3s-3imni",
+      "name": "岩石模块",
+      "image": "assets/岩石模块.png",
+      "baseColor": "#AF9078",
+      "mask": 1,
+      "dyeable": true
+    },
+    {
+      "id": "blk-mq57zmma-l2nf7",
+      "name": "砂浆模块",
+      "image": "assets/砂浆模块.png",
+      "baseColor": "#AD9B7C",
+      "mask": 1,
+      "dyeable": true
+    }
+  ],
+  "hotbar_slots": [
+    "blk-iron",
+    "blk-mq56uauv-9eew2",
+    "blk-mq56v8u1-3ryjs",
+    "blk-mq57xr3s-3imni",
+    null,
+    null,
+    null,
+    null,
+    null
+  ]
+}

@@ -33,4 +33,19 @@ if (-not (Test-Path $frontendExe)) {
 
 Copy-Item -Path $frontendExe -Destination (Join-Path $distDir 'frontend.exe') -Force
 
+Write-Host '[6/6] Copy block library and assets...'
+$libraryFile = Join-Path $scriptDir 'block_library.json'
+if (Test-Path $libraryFile) {
+    Copy-Item -Path $libraryFile -Destination (Join-Path $distDir 'block_library.json') -Force
+}
+
+$assetsDir = Join-Path $scriptDir 'frontend/src/assets'
+$distAssetsDir = Join-Path $distDir 'assets'
+if (Test-Path $assetsDir) {
+    if (-not (Test-Path $distAssetsDir)) {
+        New-Item -ItemType Directory -Path $distAssetsDir | Out-Null
+    }
+    Copy-Item -Path (Join-Path $assetsDir '*') -Destination $distAssetsDir -Recurse -Force
+}
+
 Write-Host 'Build finished successfully.' -ForegroundColor Green
