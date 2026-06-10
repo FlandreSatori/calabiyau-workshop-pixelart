@@ -5,11 +5,11 @@ from enum import Enum, auto
 from collections import defaultdict
 from typing import Sequence, Optional
 
-from blueprint_model import Blueprint
+from backend.blueprint_model import Blueprint
 from build_config import BuildConfig
 from checkpoint_store import Checkpoint, CheckpointStore
-from movement_controller import MovementController
-from ui_interaction import UIInteraction
+from backend.movement_controller import MovementController
+from backend.ui_interaction import UIInteraction
 
 
 class BuildState(Enum):

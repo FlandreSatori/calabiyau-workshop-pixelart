@@ -5,7 +5,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pydd import PyDD
-from vision_core import VisionCore
+from backend.vision_core import VisionCore
 from build_config import BuildConfig
 
 # Note: In a production app, the dll path and other settings should be configurable.

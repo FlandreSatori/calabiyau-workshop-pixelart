@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from blueprint_model import Blueprint, PixelBlock
+from backend.blueprint_model import Blueprint, PixelBlock
 
 
 def image_to_blueprint(input_path: str, output_path: str, width: int, height: int) -> Blueprint:

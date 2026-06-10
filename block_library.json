@@ -39,6 +39,14 @@
       "baseColor": "#AD9B7C",
       "mask": 1,
       "dyeable": true
+    },
+    {
+      "id": "blk-mq80boz9-1ts4v",
+      "name": "金属模块",
+      "image": "assets\\金属模块.png",
+      "baseColor": "#A9A3A3",
+      "mask": 1,
+      "dyeable": true
     }
   ],
   "hotbar_slots": [
@@ -47,7 +55,7 @@
     "blk-mq56v8u1-3ryjs",
     "blk-mq57xr3s-3imni",
     "blk-mq57zmma-l2nf7",
-    null,
+    "blk-mq80boz9-1ts4v",
     null,
     null,
     null

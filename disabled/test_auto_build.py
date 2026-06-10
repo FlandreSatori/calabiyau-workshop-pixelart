@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import time
 
-from blueprint_model import Blueprint
+from backend.blueprint_model import Blueprint
 from build_config import BuildConfig
 from fsm_engine import BuildContext, BuildFSM
 from pydd import PyDD
-from vision_core import VisionCore
+from backend.vision_core import VisionCore
 
 
 def build_parser() -> argparse.ArgumentParser:

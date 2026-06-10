@@ -152,7 +152,12 @@ def green_distance(req: AnalyzeRequest, vision: Any = Depends(get_vision)):
     vision.roi_size = req.roi_size
     vision.center = req.roi_size / 2.0
 
-    frame = vision.capture_roi()
+    try:
+        frame = vision.capture_roi()
+    except Exception as exc:
+        print(f"[vision.green-distance] capture_failed: {exc!r}")
+        return {"status": "capture_failed", "distance": None}
+
     dist = vision.measure_green_marker_edge_length(frame)
     if dist is None:
         return {"status": "fail", "distance": None}

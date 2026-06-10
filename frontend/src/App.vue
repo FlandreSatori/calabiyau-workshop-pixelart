@@ -21,13 +21,13 @@
           <el-icon><span style="font-size: 16px;">🚀</span></el-icon>
           <template #title>任务</template>
         </el-menu-item>
-        <el-menu-item index="debug">
-          <el-icon><span style="font-size: 16px;">🔧</span></el-icon>
-          <template #title>调试</template>
-        </el-menu-item>
         <el-menu-item index="inventory">
           <el-icon><span style="font-size: 16px;">🎒</span></el-icon>
           <template #title>背包</template>
+        </el-menu-item>
+        <el-menu-item index="debug">
+          <el-icon><span style="font-size: 16px;">🔧</span></el-icon>
+          <template #title>调试</template>
         </el-menu-item>
         <el-menu-item index="about">
           <el-icon><span style="font-size: 16px;">ℹ️</span></el-icon>
@@ -123,14 +123,10 @@
               <el-tag size="small" v-if="busy" type="warning" class="ml-2">执行中</el-tag>
             </div>
             <div class="action-group">
-              <el-button-group class="mr-2">
-                <el-button size="small" @click="zoomOut">🔍 -</el-button>
-                <el-button size="small" @click="zoomIn">🔍 +</el-button>
-                <el-button size="small" @click="calculateInitialZoom">适应</el-button>
-              </el-button-group>
               <el-button type="primary" :disabled="!currentBlueprint || selectionRects.length === 0" @click="markSelectionStatus('pending')">标记待建造</el-button>
               <el-button type="success" :disabled="!currentBlueprint || selectionRects.length === 0" @click="markSelectionStatus('completed')">标记已完成</el-button>
               <el-button type="warning" plain :disabled="!currentBlueprint || selectionRects.length === 0" @click="markSelectionStatus('ignored')">清除（不建造）</el-button>
+              <el-button type="primary" plain :disabled="!currentBlueprint" @click="selectAllSelection">全选选区</el-button>
               <el-button type="info" :disabled="!currentBlueprint" @click="planCurrentBlueprint">规划</el-button>
               <el-button type="success" :disabled="busy || !currentBlueprint" @click="startAutoBuild">开始搭建</el-button>
               <el-button type="danger" :disabled="!busy" @click="stopAutoBuild">停止</el-button>
@@ -166,7 +162,7 @@
           <!-- 任务页底部日志 -->
           <div class="log-footer-mini">
             <div class="log-header-mini">
-              <span>系统日志</span>
+              <span>简略日志</span>
               <el-button size="small" text @click="logs = []">清空</el-button>
             </div>
             <div class="log-content-mini" ref="logContainer">
@@ -206,7 +202,7 @@
                   <el-button :disabled="busy" type="primary" @click="testClick">测试-鼠标左击</el-button>
                   <el-button :disabled="busy" type="success" @click="testMove">测试-角色移动</el-button>
                   <el-button :disabled="busy" :type="isMoveRecognitionRunning ? 'danger' : 'info'" @click="testMoveRecognition">
-                    {{ isMoveRecognitionRunning ? '停止-跳格间隔记录' : '开始-跳格间隔记录' }}
+                    {{ isMoveRecognitionRunning ? '停止-跳变间隔记录' : '开始-跳变间隔记录' }}
                   </el-button>
                   <el-button :disabled="busy" type="warning" @click="testVision">测试-方块中心</el-button>
                   <el-button :disabled="busy" type="danger" @click="testGetColor">测试-取色</el-button>
@@ -241,10 +237,10 @@
                 </div>
                 <div class="setting-item mt-2">
                   <div class="label">移动采样率(Hz)</div>
-                  <el-input-number size="small" v-model="moveSampleRate" :min="30" :max="100" />
+                  <el-input-number size="small" v-model="moveSampleRate" :min="30" :max="120" />
                 </div>
                 <div class="setting-item mt-2">
-                  <div class="label">移动基准耗时(s, 调试)</div>
+                  <div class="label">移动基准耗时(s, 弃用)</div>
                   <el-input-number size="small" v-model="moveDurationBaseline" :min="0" :max="3" :step="0.01" :precision="3" />
                 </div>
                 <div class="setting-item mt-2">
@@ -258,9 +254,6 @@
                 <div class="setting-item mt-2">
                   <div class="label">染色失败重试次数</div>
                   <el-input-number size="small" v-model="dyeRetryCount" :min="0" :max="10" />
-                </div>
-                <div class="setting-item mt-2">
-                  <el-checkbox v-model="debugMode">DEBUG模式</el-checkbox>
                 </div>
                 <el-button size="small" type="primary" class="mt-2" plain>保存坐标校准记录 (TODO)</el-button>
                 <div class="setting-item mt-2">
@@ -337,6 +330,18 @@
               </el-card>
             </el-col>
           </el-row>
+
+          <el-card shadow="never" class="settings-card mt-3 debug-log-card">
+            <template #header>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span>详细日志</span>
+                <el-button size="small" text @click="detailLogs = []">清空</el-button>
+              </div>
+            </template>
+            <div class="log-content-mini detailed-log-content" ref="detailLogContainer">
+              <p v-for="(log, i) in reversedDetailLogs" :key="i" class="log-line">{{ log }}</p>
+            </div>
+          </el-card>
         </div>
         <div v-show="activeTab === 'inventory'" class="panel-content inventory-panel">
           <el-row :gutter="20">
@@ -456,15 +461,25 @@
           </el-row>
         </div>
         <!-- 关于面板 -->
-        <div v-show="activeTab === 'about'" class="panel-content">
-          <el-card shadow="never" class="settings-card">
-            <h2>Beta <small>v0.4.1</small></h2>
-            <p>个人主页：<a href="https://space.bilibili.com/2199618" target="_blank" rel="noopener">https://space.bilibili.com/2199618</a></p>
-            <p>项目主页：<a href="https://github.com/FlandreSatori/calabiyau-workshop-pixelart" target="_blank" rel="noopener">https://github.com/FlandreSatori/calabiyau-workshop-pixelart</a></p>
-          </el-card>
+        <div v-show="activeTab === 'about'" class="panel-content about-panel">
+          <iframe
+            :src="aboutPageUrl"
+            title="关于页面"
+            class="about-iframe"
+            loading="lazy"
+            referrerpolicy="no-referrer"
+          ></iframe>
         </div>
       </el-main>
     </el-container>
+
+    <div v-if="!backendReady" class="backend-wait-mask">
+      <div class="backend-wait-card">
+        <div class="backend-wait-title">后台启动中</div>
+        <div class="backend-wait-desc">正在连接后台服务，功能暂不可用</div>
+        <div class="backend-wait-meta">已等待 {{ backendWaitSeconds }} 秒</div>
+      </div>
+    </div>
   </el-container>
 </template>
 
@@ -507,10 +522,14 @@ const DEFAULT_BLOCKS: InventoryBlock[] = [
 
 const API_BASE = 'http://127.0.0.1:8000/api';
 const localAssetMap = import.meta.glob('./assets/**/*', { eager: true, import: 'default' }) as Record<string, string>;
+const backendReady = ref(false);
+const backendWaitSeconds = ref(0);
+let backendWaitTimer: number | undefined;
 const isCollapse = ref(false);
 const activeTab = ref('image');
 const lastDyeAction = ref<(() => Promise<boolean>) | null>(null);
 const logs = ref<string[]>([]);
+const detailLogs = ref<string[]>([]);
 const windowOptions = ref<WindowInfo[]>([]);
 const selectedWindowHwnd = ref<number | null>(null);
 const foregroundWindow = ref<WindowInfo | null>(null);
@@ -518,7 +537,6 @@ const delaySeconds = ref<number>(3);
 const autoActivateWindow = ref<boolean>(false);
 const busy = ref<boolean>(false);
 const shouldStop = ref<boolean>(false);
-const debugMode = ref(false);
 const isMoveRecognitionRunning = ref(false);
 const moveRecognitionDirection = ref<'d' | 'a' | 'space' | 'alt'>('d');
 let moveRecognitionTimer: number | undefined;
@@ -1119,14 +1137,6 @@ const handleZoom = (e: WheelEvent) => {
   const delta = e.deltaY > 0 ? 0.85 : 1.15;
   zoom.value = Math.max(0.05, Math.min(20, zoom.value * delta));
 };
-
-const zoomIn = () => {
-  zoom.value = Math.min(20, zoom.value * 1.15);
-};
-
-const zoomOut = () => {
-  zoom.value = Math.max(0.05, zoom.value * 0.85);
-};
 // Pipeline state
 const pipelineProgress = ref(0);
 const pipelineTotal = ref(0);
@@ -1246,6 +1256,16 @@ const commitSelection = (status: RegionStatus) => {
 
 const markSelectionStatus = (status: RegionStatus) => {
   commitSelection(status);
+};
+
+const selectAllSelection = () => {
+  if (!currentBlueprint.value) return;
+  const [width, height] = currentBlueprint.value.resolution || [0, 0];
+  if (width <= 0 || height <= 0) return;
+
+  selectionRects.value = [{ x0: 0, y0: 0, x1: width - 1, y1: height - 1 }];
+  markPlanDirty();
+  drawBlueprint(currentBlueprint.value, currentPipeline.value);
 };
 
 const handleCanvasMouseDown = (e: MouseEvent) => {
@@ -1432,9 +1452,11 @@ const resetProgress = () => {
 let foregroundTimer: number | undefined;
 let ws: WebSocket | null = null;
 const logContainer = ref<HTMLElement | null>(null);
+const detailLogContainer = ref<HTMLElement | null>(null);
+const aboutPageUrl = 'https://klbq.lolser.fun';
 
 const reversedLogs = computed(() => [...logs.value].reverse());
-const backendLogBuffer = ref<string[]>([]);
+const reversedDetailLogs = computed(() => [...detailLogs.value].reverse());
 
 const selectedWindow = computed(() => windowOptions.value.find((window) => window.hwnd === selectedWindowHwnd.value) ?? null);
 
@@ -1455,12 +1477,20 @@ const runExclusiveAction = async <T>(action: () => Promise<T>): Promise<T> => {
 const scrollLogsToLatest = () => {
   nextTick(() => {
     if (logContainer.value) logContainer.value.scrollTop = 0;
+    if (detailLogContainer.value) detailLogContainer.value.scrollTop = 0;
   });
 };
 
+const isHttpNoiseLog = (msg: string) =>
+  /\[HTTP\]/i.test(msg) ||
+  /\b(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\b.*\b200\s*(OK)?\b/i.test(msg);
+
 const addLog = (msg: string) => {
-  logs.value.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-  if (!debugMode.value && logs.value.length > 200) logs.value.shift();
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logs.value.push(line);
+  detailLogs.value.push(line);
+  if (logs.value.length > 200) logs.value.shift();
+  if (detailLogs.value.length > 1000) detailLogs.value.shift();
   scrollLogsToLatest();
 };
 
@@ -1509,24 +1539,22 @@ const evaluateMarkerJump = (reference: VisionMarker[], current: VisionMarker[], 
 
   let moved = false;
   const d = direction.toLowerCase();
+  const jumpThreshold = 8.0;
   
-  if ((d === 'd' || d === 'right') && gap > 15.0) moved = true;
-  else if ((d === 'a' || d === 'left') && gap < -15.0) moved = true;
-  else if ((d === 'space' || d === 'up') && gap < -15.0) moved = true;
-  else if ((d === 'alt' || d === 'down') && gap > 15.0) moved = true;
+  if ((d === 'd' || d === 'right') && gap > jumpThreshold) moved = true;
+  else if ((d === 'a' || d === 'left') && gap < -jumpThreshold) moved = true;
+  else if ((d === 'space' || d === 'up') && gap < -jumpThreshold) moved = true;
+  else if ((d === 'alt' || d === 'down') && gap > jumpThreshold) moved = true;
 
   return { moved, gap, deltas: sortedDeltas, rawLines };
 };
 
 const addBackendLog = (msg: string) => {
+  if (isHttpNoiseLog(msg)) return;
   const line = `[${new Date().toLocaleTimeString()}] [后端] ${msg}`;
-  if (debugMode.value) {
-    logs.value.push(line);
-    scrollLogsToLatest();
-    return;
-  }
-  backendLogBuffer.value.push(line);
-  if (backendLogBuffer.value.length > 1000) backendLogBuffer.value.shift();
+  detailLogs.value.push(line);
+  if (detailLogs.value.length > 1000) detailLogs.value.shift();
+  scrollLogsToLatest();
 };
 
 const formatAxiosError = (e: any): string => {
@@ -1546,14 +1574,6 @@ const formatAxiosError = (e: any): string => {
   if (requestId) parts.push(`requestId=${requestId}`);
   return parts.join(' | ');
 };
-
-watch(debugMode, (enabled) => {
-  if (enabled && backendLogBuffer.value.length > 0) {
-    logs.value.push(...backendLogBuffer.value);
-    backendLogBuffer.value = [];
-    scrollLogsToLatest();
-  }
-});
 
 watch(backpackBlocks, (blocks) => {
   for (const block of blocks) {
@@ -1713,6 +1733,28 @@ const drawBlueprint = (bp: any, pipeline: any[] = []) => {
     }
 
     if (!isStatic) {
+      const segmentPassesIgnoredCell = (
+        x1: number,
+        y1: number,
+        x2: number,
+        y2: number,
+      ) => {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 4));
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const px = x1 + dx * t;
+          const py = y1 + dy * t;
+          const gx = Math.floor(px / CELL_SIZE);
+          const gy = Math.floor(py / CELL_SIZE);
+          if (ignoredBlocks.value.has(`${gx},${gy}`)) {
+            return true;
+          }
+        }
+        return false;
+      };
+
       for (const rect of selectionRects.value) {
         const width = (rect.x1 - rect.x0 + 1) * CELL_SIZE;
         const height = (rect.y1 - rect.y0 + 1) * CELL_SIZE;
@@ -1725,32 +1767,29 @@ const drawBlueprint = (bp: any, pipeline: any[] = []) => {
       }
 
       if (activePipeline.length > 0) {
-        ctx.beginPath();
-        ctx.strokeStyle = 'rgba(255, 140, 0, 0.95)';
-        ctx.lineWidth = 3;
-        let firstPoint = true;
+        const points: Array<{ x: number; y: number }> = [];
         for (let i = 0; i < activePipeline.length; i++) {
           const tempStep = activePipeline[i];
           if (tempStep.type === 'place_and_dye') {
-            const cx = tempStep.x * CELL_SIZE + CELL_SIZE / 2;
-            const cy = tempStep.y * CELL_SIZE + CELL_SIZE / 2;
-            if (firstPoint) {
-              ctx.moveTo(cx, cy);
-              firstPoint = false;
-            } else {
-              ctx.lineTo(cx, cy);
-            }
+            points.push({
+              x: tempStep.x * CELL_SIZE + CELL_SIZE / 2,
+              y: tempStep.y * CELL_SIZE + CELL_SIZE / 2,
+            });
           }
         }
-        ctx.stroke();
 
-        for (const skipped of skippedPlannedBlocks.value) {
+        for (let i = 1; i < points.length; i++) {
+          const prev = points[i - 1];
+          const next = points[i];
+          const shouldDash = segmentPassesIgnoredCell(prev.x, prev.y, next.x, next.y);
           ctx.save();
-          ctx.fillStyle = 'rgba(255, 0, 0, 0.6)';
-          ctx.fillRect(skipped.x * CELL_SIZE, skipped.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
-          ctx.strokeStyle = '#ff0000';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(skipped.x * CELL_SIZE, skipped.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+          ctx.strokeStyle = 'rgba(255, 140, 0, 0.45)';
+          ctx.lineWidth = 3;
+          ctx.setLineDash(shouldDash ? [8, 6] : []);
+          ctx.beginPath();
+          ctx.moveTo(prev.x, prev.y);
+          ctx.lineTo(next.x, next.y);
+          ctx.stroke();
           ctx.restore();
         }
       }
@@ -2352,7 +2391,9 @@ const testMoveRecognition = async () => {
     moveRecognitionMissingFrames = 0;
     moveRecognitionLastSkipAt = null;
     moveRecognitionSkipCount = 0;
-    addLog(`[跳格间隔] 已启动，方向=${moveRecognitionDirection.value}，轮询间隔=120ms`);
+    const sampleHz = Math.max(1, Number(moveSampleRate.value || 60));
+    const pollIntervalMs = Math.max(16, Math.round(1000 / sampleHz));
+    addLog(`[跳格间隔] 已启动，方向=${moveRecognitionDirection.value}，采样率=${sampleHz}Hz，轮询间隔=${pollIntervalMs}ms`);
 
     moveRecognitionTimer = window.setInterval(async () => {
       if (!isMoveRecognitionRunning.value) return;
@@ -2375,9 +2416,6 @@ const testMoveRecognition = async () => {
           return;
         }
 
-        const missingBeforeRecovery = moveRecognitionMissingFrames;
-        moveRecognitionMissingFrames = 0;
-
         if (!moveRecognitionPreviousMarkers) {
           moveRecognitionPreviousMarkers = markers;
           return;
@@ -2385,15 +2423,15 @@ const testMoveRecognition = async () => {
 
         const evalRes = evaluateMarkerJump(moveRecognitionPreviousMarkers, markers, moveRecognitionDirection.value);
 
-        // 跳格事件定义：在连续丢标后恢复并检测到一次有效跳变。
-        if (evalRes.moved && missingBeforeRecovery >= 2) {
+        // 记录跳变
+        if (evalRes.moved) {
           const now = Date.now();
           moveRecognitionSkipCount += 1;
           if (moveRecognitionLastSkipAt !== null) {
             const intervalSec = (now - moveRecognitionLastSkipAt) / 1000;
-            addLog(`[跳格间隔] #${moveRecognitionSkipCount} 间隔=${intervalSec.toFixed(3)}s (missing=${missingBeforeRecovery}, gap=${evalRes.gap.toFixed(2)})`);
+            addLog(`[跳变间隔] #${moveRecognitionSkipCount} 间隔=${intervalSec.toFixed(3)}s (gap=${evalRes.gap.toFixed(2)})`);
           } else {
-            addLog(`[跳格间隔] #${moveRecognitionSkipCount} 首次记录 (missing=${missingBeforeRecovery}, gap=${evalRes.gap.toFixed(2)})`);
+            addLog(`[跳变间隔] #${moveRecognitionSkipCount} 首次记录 (gap=${evalRes.gap.toFixed(2)})`);
           }
           moveRecognitionLastSkipAt = now;
         }
@@ -2401,9 +2439,9 @@ const testMoveRecognition = async () => {
         // 总是把前一帧作为基准帧
         moveRecognitionPreviousMarkers = markers;
       } catch (e: any) {
-        addLog(`[跳格间隔] 请求失败: ${formatAxiosError(e)}`);
+        addLog(`[跳变间隔] 请求失败: ${formatAxiosError(e)}`);
       }
-    }, 120);
+    }, pollIntervalMs);
   } catch (e: any) {
     stopMoveRecognitionTest();
     handleApiError(e);
@@ -2493,6 +2531,8 @@ const startHotkeyCapture = () => {
 };
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
+  if (!backendReady.value) return;
+
   if (isCapturingHotkey.value) {
     e.preventDefault();
     e.stopPropagation();
@@ -2536,7 +2576,35 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
   }
 };
 
+const sleepMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitForBackendReady = async () => {
+  backendReady.value = false;
+  backendWaitSeconds.value = 0;
+
+  if (backendWaitTimer) window.clearInterval(backendWaitTimer);
+  backendWaitTimer = window.setInterval(() => {
+    backendWaitSeconds.value += 1;
+  }, 1000);
+
+  while (!backendReady.value) {
+    try {
+      await axios.get(`${API_BASE}/system/foreground`, { timeout: 900 });
+      backendReady.value = true;
+      break;
+    } catch (error) {
+      await sleepMs(800);
+    }
+  }
+
+  if (backendWaitTimer) {
+    window.clearInterval(backendWaitTimer);
+    backendWaitTimer = undefined;
+  }
+};
+
 onMounted(async () => {
+  await waitForBackendReady();
   await loadAuthoredBlockLibrary();
   restoreInventoryState();
   refreshWindows();
@@ -2548,6 +2616,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (foregroundTimer) window.clearInterval(foregroundTimer);
+  if (backendWaitTimer) window.clearInterval(backendWaitTimer);
   stopMoveRecognitionTest();
   if (ws) ws.close();
   window.removeEventListener('keydown', handleGlobalKeydown);
@@ -2588,6 +2657,9 @@ onBeforeUnmount(() => {
 .log-header-mini { padding: 8px 15px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #64748b; }
 .log-content-mini { flex: 1; overflow-y: auto; background: #1a1a1a; color: #d4d4d4; padding: 12px; font-family: 'Consolas', monospace; font-size: 12px; }
 .log-line { margin: 2px 0; border-bottom: 1px dashed #333; padding-bottom: 2px; }
+.debug-log-card { display: flex; flex-direction: column; gap: 8px; }
+.debug-log-toolbar { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
+.detailed-log-content { min-height: 300px; max-height: 500px; }
 
 /* Image/Blueprint page */
 .image-panel .canvas-container { 
@@ -2707,4 +2779,55 @@ onBeforeUnmount(() => {
 .full-width-select { width: 100%; }
 .empty-state { color: #94a3b8; font-size: 14px; }
 .ml-2 { margin-left: 8px; } .mt-3 { margin-top: 12px; } .mt-4 { margin-top: 16px; } .mb-3 { margin-bottom: 12px; }
+
+.backend-wait-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.backend-wait-card {
+  width: min(460px, calc(100vw - 40px));
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22);
+  padding: 22px;
+}
+
+.backend-wait-title {
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.backend-wait-desc {
+  color: #475569;
+  font-size: 14px;
+}
+
+.backend-wait-meta {
+  margin-top: 14px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.about-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  display: block;
+}
+.about-panel {
+  padding: 0 !important;
+  height: 100%;
+  overflow: hidden;
+}
 </style>

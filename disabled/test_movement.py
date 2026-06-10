@@ -2,8 +2,8 @@ import time
 import mss
 from pydd import PyDD
 from build_config import BuildConfig
-from vision_core import VisionCore
-from movement_controller import MovementController
+from backend.vision_core import VisionCore
+from backend.movement_controller import MovementController
 
 def main():
     # 初始化组件

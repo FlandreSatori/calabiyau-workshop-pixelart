@@ -1,7 +1,7 @@
 ﻿import time
 from statistics import mean, pstdev
 
-from vision_core import MarkerObservation, VisionCore
+from backend.vision_core import MarkerObservation, VisionCore
 import win32gui
 
 from typing import Optional

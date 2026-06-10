@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Any
 from backend.dependencies import get_dd
-from window_manager import WindowManager
+from backend.window_manager import WindowManager
 import time
 import win32gui
 from typing import Optional

@@ -250,6 +250,9 @@ def cleanup_backend_port_on_exit() -> None:
 
 def start_backend(base_dir: str) -> subprocess.Popen:
     command = build_backend_command(base_dir)
+    startup_log_path = os.path.join(base_dir, "backend_startup.log")
+    startup_log_file = open(startup_log_path, "w", encoding="utf-8", errors="ignore")
+
     if command[0].lower().endswith("backend.exe"):
         print(f"Starting packaged backend: {command[0]}")
     else:
@@ -261,14 +264,50 @@ def start_backend(base_dir: str) -> subprocess.Popen:
     # Unify runtime resource root (block_library.json, assets/) with launcher directory.
     child_env["PYDD_APP_BASE_DIR"] = base_dir
 
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         command, 
         cwd=base_dir, 
         creationflags=creation_flags,
         env=child_env,
-        # stdout=subprocess.DEVNULL,  # 重定向日志输出到 null
-        # stderr=subprocess.DEVNULL
+        stdout=startup_log_file,
+        stderr=subprocess.STDOUT,
     )
+    setattr(proc, "_startup_log_path", startup_log_path)
+    setattr(proc, "_startup_log_file", startup_log_file)
+    return proc
+
+
+def close_backend_startup_log(proc: Optional[subprocess.Popen]) -> None:
+    if not proc:
+        return
+    try:
+        f = getattr(proc, "_startup_log_file", None)
+        if f:
+            f.close()
+    except Exception:
+        pass
+
+
+def get_backend_startup_error_text(proc: Optional[subprocess.Popen]) -> str:
+    if proc is None:
+        return "backend 进程未启动。"
+
+    path = getattr(proc, "_startup_log_path", None)
+    if not path or not os.path.exists(path):
+        code = proc.poll()
+        return f"未找到 backend 启动日志。退出码: {code}"
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read().strip()
+        if not text:
+            code = proc.poll()
+            return f"backend 无输出。退出码: {code}"
+        lines = text.splitlines()
+        tail = "\n".join(lines[-80:])
+        return tail
+    except Exception as exc:
+        return f"读取 backend 启动日志失败: {exc}"
 
 
 def start_frontend(base_dir: str) -> subprocess.Popen:
@@ -360,24 +399,26 @@ def main():
     base_dir = get_app_base_dir()
     ensure_block_library(base_dir)
     ensure_backend_port_clean(base_dir)
-    backend_proc = start_backend(base_dir)
     frontend_proc: Optional[subprocess.Popen] = None
     frontend_started_unelevated = False
+    backend_proc: Optional[subprocess.Popen] = None
     
     try:
-        if wait_for_port(BACKEND_PORT, host=BACKEND_HOST, timeout=15):
-            backend_proc = recover_backend_if_needed(base_dir, backend_proc)
-            frontend_proc = start_frontend(base_dir)
-            if frontend_proc is None and sys.platform == 'win32':
-                frontend_started_unelevated = True
-                wait_for_packaged_frontend_exit_windows("frontend.exe")
-            elif frontend_proc is not None:
-                frontend_proc.wait()
-        else:
-            print("后端启动失败，无法启动前端。")
+        # 前后端并行启动，由前端页面自行检测后台连通性并显示等待遮罩。
+        frontend_proc = start_frontend(base_dir)
+        if frontend_proc is None and sys.platform == 'win32':
+            frontend_started_unelevated = True
+        backend_proc = start_backend(base_dir)
+
+        if frontend_started_unelevated and sys.platform == 'win32':
+            wait_for_packaged_frontend_exit_windows("frontend.exe")
+        elif frontend_proc is not None:
+            frontend_proc.wait()
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
+        close_backend_startup_log(backend_proc)
+
         # 定义 Windows 下隐藏窗口的创建标志
         creation_flags = 0x08000000 if sys.platform == 'win32' else 0
 

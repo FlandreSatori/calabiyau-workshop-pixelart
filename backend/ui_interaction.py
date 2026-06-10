@@ -22,7 +22,7 @@ class UIInteraction:
         self.humanize_level = humanize_level
 
     def _get_absolute_coords(self, input_x: int, input_y: int) -> tuple[int, int]:
-        from window_manager import WindowManager
+        from backend.window_manager import WindowManager
         rect = WindowManager.get_window_rect(self.exe_name)
         if rect:
             left, top, width, height = rect

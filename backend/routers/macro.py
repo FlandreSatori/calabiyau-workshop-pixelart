@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Any, Optional
 from backend.dependencies import get_dd, get_vision
-from ui_interaction import UIInteraction
-from movement_controller import MovementController
-from window_manager import WindowManager
+from backend.ui_interaction import UIInteraction
+from backend.movement_controller import MovementController
+from backend.window_manager import WindowManager
 from win32 import win32gui
 
 router = APIRouter()

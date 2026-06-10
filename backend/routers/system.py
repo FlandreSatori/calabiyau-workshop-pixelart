@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from window_manager import WindowManager
+from backend.window_manager import WindowManager
 from backend.task_manager import TaskManager
 
 router = APIRouter()

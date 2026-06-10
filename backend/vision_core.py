@@ -8,7 +8,7 @@ import cv2
 import mss
 import numpy as np
 
-from window_manager import WindowManager
+from backend.window_manager import WindowManager
 
 
 @dataclass
