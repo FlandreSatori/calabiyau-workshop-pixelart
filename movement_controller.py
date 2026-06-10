@@ -7,11 +7,14 @@ import win32gui
 from typing import Optional
 
 class MovementController:
+    _forced_by_duration_streak: int = 0
+
     def __init__(self, dd, vision: VisionCore):
         self.dd = dd
         self.vision = vision
         self.move_duration_history: list[float] = []
         self.move_jump_history: list[float] = []
+        self.last_move_reason: str = ""
 
     def _is_target_window_valid(self, target_hwnd: Optional[int]) -> bool:
         if target_hwnd is None:
@@ -99,8 +102,18 @@ class MovementController:
         self.move_duration_history = []
         self.move_jump_history = []
 
-    def move_to_next_block(self, direction: str, timeout: float = 20.0, target_hwnd: Optional[int] = None, dye_args: Optional[dict] = None, sample_rate: float = 100.0) -> bool:
+    def move_to_next_block(
+        self,
+        direction: str,
+        timeout: float = 20.0,
+        target_hwnd: Optional[int] = None,
+        dye_args: Optional[dict] = None,
+        sample_rate: float = 100.0,
+        manual_baseline_duration: Optional[float] = None,
+        missing_brake_frames: int = 5,
+    ) -> bool:
         deadline = time.time() + timeout
+        missing_streak = 0
 
         # 必须先拿到4个圆点（绿+灰），否则尝试切回1号位恢复
         check_res = self.vision.detect_alignment()
@@ -113,39 +126,53 @@ class MovementController:
             if not check_res.has_target or len(check_res.markers) != 4:
                 print("  [错误] 无法定位完整四圆点，怀疑染色失败或界面异常。")
                 self._reset_move_stats()
+                self.last_move_reason = "init_marker_missing"
                 return False
 
         prev_markers = list(check_res.markers)
         press_start = time.time()
-        warned_slow = False
-        guard_active = self._is_duration_guard_active()
-        avg_duration = float(mean(self.move_duration_history)) if self.move_duration_history else 0.0
+        manual_baseline = None
+        if manual_baseline_duration is not None:
+            try:
+                v = float(manual_baseline_duration)
+                if v > 1e-6:
+                    manual_baseline = v
+            except Exception:
+                manual_baseline = None
 
         self.dd.key_down(direction)
         try:
             while time.time() < deadline:
                 if not self._is_target_window_valid(target_hwnd):
                     self._reset_move_stats()
+                    self.last_move_reason = "foreground_lost"
                     return False
 
                 elapsed = time.time() - press_start
-                if guard_active and avg_duration > 1e-6:
-                    if not warned_slow and elapsed > avg_duration * 1.2:
-                        print(f"  [警告] 本次移动按键时长 {elapsed:.3f}s 超过历史均值 1.2x ({avg_duration * 1.2:.3f}s)")
-                        warned_slow = True
-                    if elapsed > avg_duration * 1.5:
-                        print(f"  [错误] 本次移动按键时长 {elapsed:.3f}s 超过历史均值 1.5x ({avg_duration * 1.5:.3f}s)，终止任务")
-                        self._reset_move_stats()
+                if manual_baseline is not None and elapsed > manual_baseline * 1.05:
+                    self._record_move_success(elapsed, 0.0)
+                    MovementController._forced_by_duration_streak += 1
+                    print(
+                        f"  [时长强判] 本次耗时 {elapsed:.3f}s 超过手动基准 5% "
+                        f"(基准 {manual_baseline:.3f}s, 阈值 {manual_baseline * 1.05:.3f}s)，强制判定移动成功"
+                    )
+                    if MovementController._forced_by_duration_streak >= 2:
+                        print("  [错误] 连续两次触发时长强判，停止任务")
+                        self.last_move_reason = "stopped_by_duration_guard"
                         return False
+                    self.last_move_reason = "forced_by_duration"
+                    return True
 
                 result = self.vision.detect_alignment()
                 if result.has_target and len(result.markers) == 4:
+                    missing_streak = 0
                     current_markers = list(result.markers)
                     moved, jump_amount = self._evaluate_move_jump(prev_markers, current_markers, direction)
 
                     if moved:
                         press_duration = time.time() - press_start
                         self._record_move_success(press_duration, jump_amount)
+                        MovementController._forced_by_duration_streak = 0
 
                         d = direction.lower()
                         if d in ("d", "right"):
@@ -156,14 +183,21 @@ class MovementController:
                             print(f"  => 向上移动成功（跳变 {jump_amount:.2f}px, 按键 {press_duration:.3f}s）")
                         else:
                             print(f"  => 向下移动成功（跳变 {jump_amount:.2f}px, 按键 {press_duration:.3f}s）")
+                        self.last_move_reason = "success"
                         return True
 
                     # 始终采用上一帧作为参考帧
                     prev_markers = current_markers
+                else:
+                    missing_streak += 1
+                    if missing_streak >= max(1, int(missing_brake_frames)):
+                        self.last_move_reason = "missing_brake"
+                        return False
 
                 # 提高采样率，避免错过判定点
                 time.sleep(1.0 / max(1.0, sample_rate))
             self._reset_move_stats()
+            self.last_move_reason = "failed_to_find_marker"
             return False
         finally:
             self.dd.key_up(direction)

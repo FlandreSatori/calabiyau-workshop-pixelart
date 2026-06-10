@@ -206,7 +206,7 @@
                   <el-button :disabled="busy" type="primary" @click="testClick">测试-鼠标左击</el-button>
                   <el-button :disabled="busy" type="success" @click="testMove">测试-角色移动</el-button>
                   <el-button :disabled="busy" :type="isMoveRecognitionRunning ? 'danger' : 'info'" @click="testMoveRecognition">
-                    {{ isMoveRecognitionRunning ? '停止-识别移动' : '测试-识别移动' }}
+                    {{ isMoveRecognitionRunning ? '停止-跳格间隔记录' : '开始-跳格间隔记录' }}
                   </el-button>
                   <el-button :disabled="busy" type="warning" @click="testVision">测试-方块中心</el-button>
                   <el-button :disabled="busy" type="danger" @click="testGetColor">测试-取色</el-button>
@@ -242,6 +242,10 @@
                 <div class="setting-item mt-2">
                   <div class="label">移动采样率(Hz)</div>
                   <el-input-number size="small" v-model="moveSampleRate" :min="30" :max="100" />
+                </div>
+                <div class="setting-item mt-2">
+                  <div class="label">移动基准耗时(s, 调试)</div>
+                  <el-input-number size="small" v-model="moveDurationBaseline" :min="0" :max="3" :step="0.01" :precision="3" />
                 </div>
                 <div class="setting-item mt-2">
                   <div class="label">拟人化等级 (0-3)</div>
@@ -454,7 +458,7 @@
         <!-- 关于面板 -->
         <div v-show="activeTab === 'about'" class="panel-content">
           <el-card shadow="never" class="settings-card">
-            <h2>Beta <small>v0.3.1</small></h2>
+            <h2>Beta <small>v0.4.1</small></h2>
             <p>个人主页：<a href="https://space.bilibili.com/2199618" target="_blank" rel="noopener">https://space.bilibili.com/2199618</a></p>
             <p>项目主页：<a href="https://github.com/FlandreSatori/calabiyau-workshop-pixelart" target="_blank" rel="noopener">https://github.com/FlandreSatori/calabiyau-workshop-pixelart</a></p>
           </el-card>
@@ -519,9 +523,9 @@ const isMoveRecognitionRunning = ref(false);
 const moveRecognitionDirection = ref<'d' | 'a' | 'space' | 'alt'>('d');
 let moveRecognitionTimer: number | undefined;
 let moveRecognitionPreviousMarkers: VisionMarker[] | null = null;
-let moveRecognitionLastSignature = '';
-let moveRecognitionMergeCount = 0;
 let moveRecognitionMissingFrames = 0;
+let moveRecognitionLastSkipAt: number | null = null;
+let moveRecognitionSkipCount = 0;
 
 // Baseline-based view adjust
 const baselineGreenDistance = ref<number | null>(null);
@@ -537,6 +541,7 @@ const configConfirmY = ref(1052);
 const configVerifyX = ref(2291);
 const configVerifyY = ref(933);
 const moveSampleRate = ref(60);
+const moveDurationBaseline = ref(0.0); // 0 表示不启用手动基准时长强判
 const dyeRetryCount = ref(1); //包含大量纯黑纯白色时应适当降低
 const focusSettleDelay = ref(0.05);
 const placeKeyDelay = ref(0.1);
@@ -1459,20 +1464,6 @@ const addLog = (msg: string) => {
   scrollLogsToLatest();
 };
 
-const addMergedLog = (signature: string, msg: string) => {
-  if (signature && signature === moveRecognitionLastSignature && logs.value.length > 0) {
-    moveRecognitionMergeCount += 1;
-    const idx = logs.value.length - 1;
-    logs.value[idx] = logs.value[idx].replace(/ \(x\d+\)$/, '') + ` (x${moveRecognitionMergeCount})`;
-    scrollLogsToLatest();
-    return;
-  }
-
-  moveRecognitionLastSignature = signature;
-  moveRecognitionMergeCount = 1;
-  addLog(msg);
-};
-
 const matchMarkers = (reference: VisionMarker[], current: VisionMarker[]) => {
   if (reference.length !== 4 || current.length !== 4) return [] as Array<{ ref: VisionMarker; cur: VisionMarker }>;
   const remaining = new Set([0, 1, 2, 3]);
@@ -1927,6 +1918,7 @@ const getTargetPayload = (slotOverride?: number) => ({
   ui_click_delay: uiClickDelay.value,
   ui_clipboard_delay: uiClipboardDelay.value,
   move_sample_rate: moveSampleRate.value,
+  move_duration_baseline: moveDurationBaseline.value > 0 ? moveDurationBaseline.value : undefined,
   humanize_level: humanizeLevel.value,
   place_slot: slotOverride ?? (activeHotbarIndex.value + 1),
   dye_slot: slotOverride ?? (activeHotbarIndex.value + 1),
@@ -2207,12 +2199,22 @@ const startAutoBuild = async () => {
                   if (retryMoveRes.data.status === 'failed_to_find_marker') {
                     throw new Error('回退重新染色后依然无法定位🟢，任务终止');
                   }
+                  if (retryMoveRes.data.status === 'missing_brake') {
+                    throw new Error('回退后移动触发连续丢标刹车，任务已停止');
+                  }
+                  if (retryMoveRes.data.status === 'stopped_by_duration_guard') {
+                    throw new Error('连续两次触发移动时长强判，任务已停止');
+                  }
                 } else {
                   throw new Error('回退重试次数耗尽，任务终止');
                 }
               } else {
                 throw new Error('无上一步染色操作记录，无法执行回退，任务终止');
               }
+            } else if (moveRes.data.status === 'missing_brake') {
+              throw new Error('连续丢失标记触发移动刹车，已停止本次移动以防跳格');
+            } else if (moveRes.data.status === 'stopped_by_duration_guard') {
+              throw new Error('连续两次触发移动时长强判，任务已停止');
             }
           } catch (err: any) {
             throw err;
@@ -2331,15 +2333,15 @@ const stopMoveRecognitionTest = () => {
   }
   isMoveRecognitionRunning.value = false;
   moveRecognitionPreviousMarkers = null;
-  moveRecognitionLastSignature = '';
-  moveRecognitionMergeCount = 0;
   moveRecognitionMissingFrames = 0;
+  moveRecognitionLastSkipAt = null;
+  moveRecognitionSkipCount = 0;
 };
 
 const testMoveRecognition = async () => {
   if (isMoveRecognitionRunning.value) {
     stopMoveRecognitionTest();
-    addLog('[移动识别测试] 已停止');
+    addLog('[跳格间隔] 已停止');
     return;
   }
 
@@ -2347,10 +2349,10 @@ const testMoveRecognition = async () => {
     await prepareWindowFocus();
     isMoveRecognitionRunning.value = true;
     moveRecognitionPreviousMarkers = null;
-    moveRecognitionLastSignature = '';
-    moveRecognitionMergeCount = 0;
     moveRecognitionMissingFrames = 0;
-    addLog(`[移动识别测试] 已启动，方向=${moveRecognitionDirection.value}，轮询间隔=120ms`);
+    moveRecognitionLastSkipAt = null;
+    moveRecognitionSkipCount = 0;
+    addLog(`[跳格间隔] 已启动，方向=${moveRecognitionDirection.value}，轮询间隔=120ms`);
 
     moveRecognitionTimer = window.setInterval(async () => {
       if (!isMoveRecognitionRunning.value) return;
@@ -2367,39 +2369,39 @@ const testMoveRecognition = async () => {
 
         if (!hasTarget || markers.length !== 4) {
           moveRecognitionMissingFrames += 1;
-          const signature = `no-target-${markers.length}-${Math.min(moveRecognitionMissingFrames, 8)}`;
-          addMergedLog(signature, `[移动识别测试] 未满足四圆点条件 has_target=${hasTarget} markers=${markers.length} missing=${moveRecognitionMissingFrames}`);
           if (moveRecognitionMissingFrames >= 8) {
             moveRecognitionPreviousMarkers = null;
           }
           return;
         }
 
+        const missingBeforeRecovery = moveRecognitionMissingFrames;
         moveRecognitionMissingFrames = 0;
 
         if (!moveRecognitionPreviousMarkers) {
           moveRecognitionPreviousMarkers = markers;
-          const markerMsg = markers
-            .map((m, i) => `#${i + 1}(x=${m.x.toFixed(1)},y=${m.y.toFixed(1)},r=${m.radius.toFixed(2)},arc=${m.arc_ratio.toFixed(2)},g=${m.green_ratio.toFixed(2)})`)
-            .join(' | ');
-          addMergedLog(`init-${markers.map((m) => `${Math.round(m.x)}:${Math.round(m.y)}`).join(',')}`, `[移动识别测试] 已建立基准帧 ${markerMsg}`);
           return;
         }
 
         const evalRes = evaluateMarkerJump(moveRecognitionPreviousMarkers, markers, moveRecognitionDirection.value);
-        const markerDetail = evalRes.rawLines.join(' | ');
-        const sortedDeltasStr = evalRes.deltas.map(d => d.toFixed(1)).join(',');
-        const signature = `m=${evalRes.moved ? 1 : 0};gap=${evalRes.gap.toFixed(1)}`;
 
-        addMergedLog(
-          signature,
-          `[移动识别测试] jump=${evalRes.moved} gap=${evalRes.gap.toFixed(2)} sorted_deltas=[${sortedDeltasStr}] | ${markerDetail}`,
-        );
+        // 跳格事件定义：在连续丢标后恢复并检测到一次有效跳变。
+        if (evalRes.moved && missingBeforeRecovery >= 2) {
+          const now = Date.now();
+          moveRecognitionSkipCount += 1;
+          if (moveRecognitionLastSkipAt !== null) {
+            const intervalSec = (now - moveRecognitionLastSkipAt) / 1000;
+            addLog(`[跳格间隔] #${moveRecognitionSkipCount} 间隔=${intervalSec.toFixed(3)}s (missing=${missingBeforeRecovery}, gap=${evalRes.gap.toFixed(2)})`);
+          } else {
+            addLog(`[跳格间隔] #${moveRecognitionSkipCount} 首次记录 (missing=${missingBeforeRecovery}, gap=${evalRes.gap.toFixed(2)})`);
+          }
+          moveRecognitionLastSkipAt = now;
+        }
 
         // 总是把前一帧作为基准帧
         moveRecognitionPreviousMarkers = markers;
       } catch (e: any) {
-        addMergedLog('move-recognition-error', `[移动识别测试] 请求失败: ${formatAxiosError(e)}`);
+        addLog(`[跳格间隔] 请求失败: ${formatAxiosError(e)}`);
       }
     }, 120);
   } catch (e: any) {

@@ -190,16 +190,25 @@ class VisionCore:
             np.array([160, 190, 160], dtype=np.uint8),
             np.array([175, 205, 175], dtype=np.uint8),
         )
-
-        combined = cv2.bitwise_or(green_mask, ghost_mask)
+        # 先分别做轻量开运算去噪，再合并；避免 close 操作把相邻标记粘成同一轮廓
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=1)
-        combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel, iterations=1)
+        green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        ghost_mask = cv2.morphologyEx(ghost_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        combined = cv2.bitwise_or(green_mask, ghost_mask)
         return combined, green_mask, ghost_mask
 
     def _fit_marker_from_contour(self, contour: np.ndarray, green_mask: np.ndarray) -> Optional[MarkerObservation]:
         area = float(cv2.contourArea(contour))
         if area < 35.0:
+            return None
+
+        perimeter = float(cv2.arcLength(contour, True))
+        if perimeter <= 1e-6:
+            return None
+
+        # 对残缺圆放宽，但尽量过滤掉明显正方形。
+        circularity = float(4.0 * np.pi * area / (perimeter * perimeter))
+        if circularity < 0.20:
             return None
 
         (cx, cy), radius = cv2.minEnclosingCircle(contour)
@@ -241,6 +250,44 @@ class VisionCore:
             arc_ratio=float(np.clip(fill_ratio, 0.0, 1.0)),
             green_ratio=green_ratio,
         )
+
+    def _extract_residual_arc_contours(self, contour: np.ndarray, shape: tuple[int, int]) -> list[np.ndarray]:
+        area = float(cv2.contourArea(contour))
+        if area < 35.0:
+            return []
+
+        rect = cv2.minAreaRect(contour)
+        (_, _), (w, h), _ = rect
+        rect_area = float(max(1.0, w * h))
+        rectangularity = float(area / rect_area)
+
+        # 疑似“方块+圆角突起”连通域：先移除方形核心，再提取残缺圆。
+        is_square_like = rectangularity >= 0.68 and area >= 160.0
+        if not is_square_like:
+            return [contour]
+
+        component_mask = np.zeros(shape, dtype=np.uint8)
+        cv2.drawContours(component_mask, [contour], -1, 255, thickness=-1)
+
+        rect_mask = np.zeros(shape, dtype=np.uint8)
+        box = cv2.boxPoints(rect).astype(np.int32)
+        cv2.drawContours(rect_mask, [box], -1, 255, thickness=-1)
+
+        # 对矩形核轻微腐蚀，避免把边缘真正圆弧也一并抹掉。
+        core_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        rect_core = cv2.erode(rect_mask, core_kernel, iterations=1)
+
+        residual = cv2.bitwise_and(component_mask, cv2.bitwise_not(rect_core))
+        residual = cv2.morphologyEx(
+            residual,
+            cv2.MORPH_OPEN,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+            iterations=1,
+        )
+
+        residual_contours, _ = cv2.findContours(residual, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        kept = [c for c in residual_contours if cv2.contourArea(c) >= 16.0]
+        return kept if kept else [contour]
 
     def _dedupe_markers(self, markers: list[MarkerObservation]) -> list[MarkerObservation]:
         if not markers:
@@ -308,14 +355,24 @@ class VisionCore:
         return best_group if best_group is not None else []
 
     def _extract_four_markers(self, frame: np.ndarray) -> list[MarkerObservation]:
-        combined_mask, green_mask, _ = self._build_marker_masks(frame)
-        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        combined_mask, green_mask, ghost_mask = self._build_marker_masks(frame)
+        _, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours_green, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours_ghost, _ = cv2.findContours(ghost_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         candidates: list[MarkerObservation] = []
-        for contour in contours:
-            marker = self._fit_marker_from_contour(contour, green_mask)
-            if marker is not None:
-                candidates.append(marker)
+        for contour in contours_green:
+            arc_contours = self._extract_residual_arc_contours(contour, green_mask.shape)
+            for arc_contour in arc_contours:
+                marker = self._fit_marker_from_contour(arc_contour, green_mask)
+                if marker is not None:
+                    candidates.append(marker)
+        for contour in contours_ghost:
+            arc_contours = self._extract_residual_arc_contours(contour, ghost_mask.shape)
+            for arc_contour in arc_contours:
+                marker = self._fit_marker_from_contour(arc_contour, green_mask)
+                if marker is not None:
+                    candidates.append(marker)
 
         if len(candidates) < 4:
             return []
