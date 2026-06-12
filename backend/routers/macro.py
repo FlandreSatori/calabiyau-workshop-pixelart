@@ -45,7 +45,6 @@ class DyeConfirmRequest(BaseGameRequest):
 class MoveCharacterRequest(BaseGameRequest):
     direction: str
     timeout: float = 20.0
-    move_duration_baseline: Optional[float] = Field(None, ge=0.0, le=10.0)
     dye_recovery: Optional[dict]= None
 
 class MoveKeepRequest(BaseGameRequest):
@@ -176,17 +175,9 @@ def move_character(req: MoveCharacterRequest, dd: Any = Depends(get_dd), vision:
         req.timeout, 
         target_hwnd, 
         dye_args=req.dye_recovery,
-        sample_rate=req.move_sample_rate,
-        manual_baseline_duration=req.move_duration_baseline,
-        missing_brake_frames=5,
+        sample_rate=req.move_sample_rate
     )
-    if success:
-        return {"status": movement.last_move_reason or "success", "moved": True}
-    if movement.last_move_reason == "stopped_by_duration_guard":
-        return {"status": "stopped_by_duration_guard", "moved": False}
-    if movement.last_move_reason == "missing_brake":
-        return {"status": "missing_brake", "moved": False}
-    return {"status": "failed_to_find_marker", "moved": False}
+    return {"status": "success" if success else "failed_to_find_marker", "moved": success}
 
 @router.post("/move-keep")
 def move_character_keep(req: MoveKeepRequest, dd: Any = Depends(get_dd), vision: Any = Depends(get_vision)):
