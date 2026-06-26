@@ -12,7 +12,7 @@ from build_config import BuildConfig
 # Here we initialize the global dependencies to be shared across routers.
 
 try:
-    dd_instance = PyDD("./dd.54900.dll")
+    dd_instance = PyDD("./dd63330.dll")
 except Exception as e:
     print(f"Warning: Could not initialize PyDD: {e}")
     # Dry run fallback for testing/development

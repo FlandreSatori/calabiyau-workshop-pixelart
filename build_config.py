@@ -7,7 +7,7 @@ from pathlib import Path
 @dataclass
 class BuildConfig:
     blueprint_path: str
-    dd_dll_path: str = "./dd.54900.dll"
+    dd_dll_path: str = "./dd63330.dll"
     monitor_index: int = 2
     roi_size: int = 315
     color_input_x: int = 2157

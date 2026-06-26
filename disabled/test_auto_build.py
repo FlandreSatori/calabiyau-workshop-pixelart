@@ -13,7 +13,7 @@ from backend.vision_core import VisionCore
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the pixel art auto builder.")
     parser.add_argument("--blueprint", required=True, help="Blueprint JSON path")
-    parser.add_argument("--dll", default="./dd.54900.dll", help="DD DLL path")
+    parser.add_argument("--dll", default="./dd63330.dll", help="DD DLL path")
     parser.add_argument("--monitor", type=int, default=2, help="Capture monitor index")
     parser.add_argument("--roi-size", type=int, default=315, help="Vision ROI size")
     parser.add_argument("--color-input-x", type=int, default=2157, help="HEX input X coordinate")
